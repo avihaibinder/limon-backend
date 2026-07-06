@@ -12,9 +12,7 @@ def _new_id() -> str:
 
 class Tag(Base):
     __tablename__ = "tags"
-    __table_args__ = (
-        UniqueConstraint("user_id", "name", name="uq_tags_user_id_name"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_tags_user_id_name"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
     user_id: Mapped[str] = mapped_column(

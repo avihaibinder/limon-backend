@@ -108,6 +108,31 @@ will go away.
 uv run pytest
 ```
 
+## Linting & formatting
+
+Both are handled by [Ruff](https://docs.astral.sh/ruff/):
+
+```bash
+uv run ruff check .            # lint
+uv run ruff check --fix .      # lint, auto-fixing what it can
+uv run ruff format .           # format
+uv run ruff format --check .   # format check only (what CI runs), no changes
+```
+
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and
+every pull request, with three jobs:
+
+- **lint** — `ruff check` and `ruff format --check` via `uv`
+- **test** — `pytest` executed inside the `api` container
+  (`docker compose run`), so tests run against the same environment the app
+  actually ships in (this matters more once a real database service is
+  added)
+- **compose-smoke-test** — `docker compose up --build`, waits for
+  `/health` to respond, then tears the stack down; catches breakage in the
+  Dockerfile/compose setup itself, not just the app code
+
 ## Running with Docker
 
 The API can also run in a container via Docker Compose, using the same `uv`
