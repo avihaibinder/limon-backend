@@ -125,8 +125,26 @@ volume and its data).
 
 Compose sets `LIMON_DATABASE_URL` to point at that volume path; override any
 `LIMON_*` variable via the `environment:` block in `docker-compose.yml` or a
-`.env` file as needed. As more services (a real DB, blob storage, etc.) are
-introduced, they'll be added to `docker-compose.yml` alongside `api`.
+`.env` file as needed. As more services (a real DB, etc.) are introduced,
+they'll be added to `docker-compose.yml` alongside `api`.
+
+### Blob storage (MinIO)
+
+`docker compose up` also starts a [MinIO](https://min.io/) container as an
+S3-compatible object store for future blob storage needs (e.g. voice note
+audio):
+
+- S3 API: http://localhost:9000
+- Web console: http://localhost:9001 (default credentials `minioadmin` /
+  `minioadmin` — override via `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` in
+  `docker-compose.yml` for anything beyond local dev)
+- A `minio-init` one-shot service waits for MinIO to become healthy and
+  creates the default bucket (`limon`) automatically
+- Data persists in the `minio-data` volume across restarts
+
+The API container is passed `LIMON_S3_ENDPOINT_URL`, `LIMON_S3_ACCESS_KEY`,
+`LIMON_S3_SECRET_KEY`, and `LIMON_S3_BUCKET` so a future storage client can
+pick them up; no app code uses them yet.
 
 ## Notes
 

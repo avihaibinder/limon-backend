@@ -70,7 +70,7 @@ Legend: MVP = required for first release, P2 = later.
 
 ### Infra
 - [ ] Migrate DB target — evaluate Supabase (Postgres) vs. current SQLite
-- [ ] Blob storage for voice note audio — evaluate MinIO
+- [x] Blob storage infra — MinIO running via docker-compose (bucket `limon`); app-level client still TBD once a feature needs it
 - [ ] Testing: unit tests exist for events/tags/users; need FE test coverage too
 - [ ] Security review
 - [ ] "Adi/matn" oracle machine — context TBD, ask user before assuming scope
@@ -114,7 +114,13 @@ uv add --dev <package>                 # add a dev-only dependency
   `docker-compose.yml`), using `uv sync --frozen` at build time and `uv run
   uvicorn ...` as the run command to mirror local dev. SQLite data is
   persisted to the `limon-data` volume at `/app/data`. As real infra
-  (Postgres/Supabase, MinIO, etc.) is added, extend `docker-compose.yml`
-  with those services rather than introducing a separate compose file.
+  (Postgres/Supabase, etc.) is added, extend `docker-compose.yml` with
+  those services rather than introducing a separate compose file.
+- `docker-compose.yml` also runs a MinIO container (S3-compatible blob
+  storage) plus a one-shot `minio-init` service that waits for MinIO's
+  healthcheck and creates the default `limon` bucket. This is infra-only
+  for now — the API receives `LIMON_S3_*` env vars but no app code reads
+  them yet; add a storage client/service once a feature (e.g. voice notes)
+  needs to upload/download blobs.
 - This file is intentionally a starting point — update it as decisions are
   made (DB choice, auth provider, storage, etc.).
