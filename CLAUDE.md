@@ -71,6 +71,7 @@ Legend: MVP = required for first release, P2 = later.
 ### Infra
 - [ ] Migrate DB target — evaluate Supabase (Postgres) vs. current SQLite
 - [x] Blob storage infra — MinIO running via docker-compose (bucket `limon`); app-level client still TBD once a feature needs it
+- [x] CI — GitHub Actions runs lint (Ruff), format check, pytest (in-container), and a docker-compose smoke test on every push/PR
 - [ ] Testing: unit tests exist for events/tags/users; need FE test coverage too
 - [ ] Security review
 - [ ] "Adi/matn" oracle machine — context TBD, ask user before assuming scope
@@ -96,9 +97,19 @@ must be committed with any `pyproject.toml` dependency change.
 uv sync --extra dev                    # create .venv, install deps (pinned via uv.lock)
 uv run uvicorn app.main:app --reload   # dev server, docs at /docs
 uv run pytest                          # run tests
+uv run ruff check .                    # lint
+uv run ruff format .                   # format
 uv add <package>                       # add a runtime dependency
 uv add --dev <package>                 # add a dev-only dependency
 ```
+
+Linting/formatting is [Ruff](https://docs.astral.sh/ruff/) (config in
+`pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]`, 100-char line length).
+CI (`.github/workflows/ci.yml`) runs `ruff check` + `ruff format --check`,
+runs `pytest` inside the `api` container via `docker compose run` (so tests
+exercise the same environment the app ships in — matters more once a real
+DB service replaces SQLite), and a smoke test that boots the full compose
+stack and checks `/health`.
 
 ## Notes
 

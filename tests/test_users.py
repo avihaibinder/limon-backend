@@ -73,9 +73,7 @@ async def test_list_users(client: AsyncClient) -> None:
 async def test_update_user_profile_fields(client: AsyncClient) -> None:
     created = await _create_user(client)
 
-    response = await client.patch(
-        f"{USERS_URL}/{created['id']}", json={"display_name": "Renamed"}
-    )
+    response = await client.patch(f"{USERS_URL}/{created['id']}", json={"display_name": "Renamed"})
     assert response.status_code == 200
     body = response.json()
 

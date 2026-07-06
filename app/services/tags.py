@@ -20,9 +20,7 @@ async def get_tag(session: AsyncSession, tag_id: str) -> Tag | None:
 
 
 async def get_tag_by_name(session: AsyncSession, user_id: str, name: str) -> Tag | None:
-    return await session.scalar(
-        select(Tag).where(Tag.user_id == user_id, Tag.name == name)
-    )
+    return await session.scalar(select(Tag).where(Tag.user_id == user_id, Tag.name == name))
 
 
 async def list_tags(
