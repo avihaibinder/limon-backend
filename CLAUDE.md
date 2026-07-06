@@ -110,8 +110,11 @@ uv add --dev <package>                 # add a dev-only dependency
   transitive/marker-based extra) because SQLAlchemy's platform marker for it
   omits macOS Apple Silicon (`arm64`), so `uv sync` would otherwise skip
   installing it on those machines and every async DB call would fail.
-- Docker/`docker-compose` support is planned for a later PR; the container
-  workflow will also use `uv` (`uv sync --frozen` at build time, `uv run
-  uvicorn ...` as the run command) to mirror local dev.
+- `docker compose up --build` runs the API in a container (`Dockerfile` +
+  `docker-compose.yml`), using `uv sync --frozen` at build time and `uv run
+  uvicorn ...` as the run command to mirror local dev. SQLite data is
+  persisted to the `limon-data` volume at `/app/data`. As real infra
+  (Postgres/Supabase, MinIO, etc.) is added, extend `docker-compose.yml`
+  with those services rather than introducing a separate compose file.
 - This file is intentionally a starting point — update it as decisions are
   made (DB choice, auth provider, storage, etc.).
