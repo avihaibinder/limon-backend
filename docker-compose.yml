@@ -1,0 +1,14 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      LIMON_DEBUG: "true"
+      LIMON_DATABASE_URL: sqlite+aiosqlite:///./data/limon.db
+      LIMON_CORS_ORIGINS: '["*"]'
+    volumes:
+      - limon-data:/app/data
+
+volumes:
+  limon-data:

@@ -108,14 +108,29 @@ will go away.
 uv run pytest
 ```
 
+## Running with Docker
+
+The API can also run in a container via Docker Compose, using the same `uv`
+commands as local dev under the hood:
+
+```bash
+docker compose up --build
+```
+
+This builds the image (`uv sync --frozen` at build time), starts the API on
+http://localhost:8000, and persists the SQLite database file to a named
+volume (`limon-data`, mounted at `/app/data`) so data survives container
+restarts. Stop it with `docker compose down` (add `-v` to also drop the
+volume and its data).
+
+Compose sets `LIMON_DATABASE_URL` to point at that volume path; override any
+`LIMON_*` variable via the `environment:` block in `docker-compose.yml` or a
+`.env` file as needed. As more services (a real DB, blob storage, etc.) are
+introduced, they'll be added to `docker-compose.yml` alongside `api`.
+
 ## Notes
 
 - Tables are created automatically on startup; switch to Alembic migrations
   once the schema needs to evolve in production.
 - CORS defaults to `["*"]` for development — restrict `LIMON_CORS_ORIGINS`
   before deploying.
-- **Docker (planned):** a `Dockerfile` and `docker-compose.yml` will be added
-  in a later PR to run the API alongside its database and other services.
-  The image will use `uv` too (e.g. `uv sync --frozen` at build time and
-  `uv run uvicorn ...` as the container command), so the local workflow
-  above mirrors how the service runs in containers.
