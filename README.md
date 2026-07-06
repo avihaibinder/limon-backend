@@ -2,7 +2,7 @@
 
 FastAPI backend for the [LimON](../LimON) React Native app.
 
-**Stack:** Python 3.11+ · FastAPI · Pydantic v2 · SQLAlchemy 2 (async) · SQLite
+**Stack:** Python 3.11+ · FastAPI · Pydantic v2 · SQLAlchemy 2 (async) · SQLite · [uv](https://docs.astral.sh/uv/)
 
 ## Project layout
 
@@ -21,16 +21,43 @@ tests/               # pytest + httpx, isolated in-memory DB per test
 
 ## Getting started
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
+Dependencies and the virtual environment are managed with
+[`uv`](https://docs.astral.sh/uv/). Install `uv` itself first (once per
+machine):
 
-# run the dev server
-uvicorn app.main:app --reload
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS/Linux
+# or: pipx install uv / brew install uv
 ```
 
+Then, from the repo root:
+
+```bash
+# create .venv and install the project + dev dependencies, pinned via uv.lock
+uv sync --extra dev
+
+# run the dev server (auto-reload)
+uv run uvicorn app.main:app --reload
+```
+
+`uv sync` creates `.venv` automatically — there's no separate "activate"
+step needed; `uv run` executes commands inside that environment. You can
+still `source .venv/bin/activate` if you prefer working inside the shell
+directly.
+
 Interactive docs: http://127.0.0.1:8000/docs
+
+### Adding or updating dependencies
+
+```bash
+uv add <package>              # add a runtime dependency
+uv add --dev <package>        # add a dev-only dependency
+uv sync --extra dev           # re-sync .venv after pulling changes to uv.lock
+uv lock --upgrade              # upgrade locked versions
+```
+
+Always commit `uv.lock` alongside `pyproject.toml` changes so installs stay
+reproducible across machines and (later) Docker builds.
 
 ## Configuration
 
@@ -77,8 +104,8 @@ will go away.
 
 ## Tests
 
-```powershell
-pytest
+```bash
+uv run pytest
 ```
 
 ## Notes
@@ -87,3 +114,8 @@ pytest
   once the schema needs to evolve in production.
 - CORS defaults to `["*"]` for development — restrict `LIMON_CORS_ORIGINS`
   before deploying.
+- **Docker (planned):** a `Dockerfile` and `docker-compose.yml` will be added
+  in a later PR to run the API alongside its database and other services.
+  The image will use `uv` too (e.g. `uv sync --frozen` at build time and
+  `uv run uvicorn ...` as the container command), so the local workflow
+  above mirrors how the service runs in containers.

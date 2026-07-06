@@ -88,10 +88,16 @@ Legend: MVP = required for first release, P2 = later.
 
 ## Commands
 
-```powershell
-pip install -e ".[dev]"
-uvicorn app.main:app --reload   # dev server, docs at /docs
-pytest                          # run tests
+Dependency management and execution use [`uv`](https://docs.astral.sh/uv/)
+(not raw `pip`). `uv.lock` is the source of truth for pinned versions and
+must be committed with any `pyproject.toml` dependency change.
+
+```bash
+uv sync --extra dev                    # create .venv, install deps (pinned via uv.lock)
+uv run uvicorn app.main:app --reload   # dev server, docs at /docs
+uv run pytest                          # run tests
+uv add <package>                       # add a runtime dependency
+uv add --dev <package>                 # add a dev-only dependency
 ```
 
 ## Notes
@@ -100,5 +106,12 @@ pytest                          # run tests
   before this needs real schema evolution in production.
 - CORS defaults to `["*"]` for development — restrict `LIMON_CORS_ORIGINS`
   before deploying.
+- `greenlet` is declared as a direct dependency (not left as SQLAlchemy's
+  transitive/marker-based extra) because SQLAlchemy's platform marker for it
+  omits macOS Apple Silicon (`arm64`), so `uv sync` would otherwise skip
+  installing it on those machines and every async DB call would fail.
+- Docker/`docker-compose` support is planned for a later PR; the container
+  workflow will also use `uv` (`uv sync --frozen` at build time, `uv run
+  uvicorn ...` as the run command) to mirror local dev.
 - This file is intentionally a starting point — update it as decisions are
   made (DB choice, auth provider, storage, etc.).
