@@ -1,0 +1,14 @@
+#!/bin/sh
+# Blocks `git push` if Ruff lint or format checks fail.
+# Installed via `uv run python scripts/hooks/install.py` (or symlink manually
+# into .git/hooks/pre-push).
+
+set -e
+
+echo "Running ruff check..."
+uv run ruff check .
+
+echo "Running ruff format --check..."
+uv run ruff format --check .
+
+echo "Ruff checks passed."
