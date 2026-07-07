@@ -119,6 +119,18 @@ uv run ruff format .           # format
 uv run ruff format --check .   # format check only (what CI runs), no changes
 ```
 
+### Pre-push hook (optional, recommended)
+
+Install a local `pre-push` git hook that runs `ruff check` and `ruff format
+--check` before every `git push`, aborting the push if either fails:
+
+```bash
+uv run python scripts/hooks/install.py
+```
+
+This only runs locally for whoever installs it — CI's `lint` job is the
+real enforcement backstop for everyone else.
+
 ## CI
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and

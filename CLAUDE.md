@@ -111,6 +111,11 @@ exercise the same environment the app ships in — matters more once a real
 DB service replaces SQLite), and a smoke test that boots the full compose
 stack and checks `/health`.
 
+Optional local enforcement: `uv run python scripts/hooks/install.py`
+installs a `pre-push` git hook (`scripts/hooks/pre-push`) that blocks
+`git push` if `ruff check` or `ruff format --check` fail. It's opt-in per
+machine — CI's `lint` job is what actually enforces this for everyone.
+
 ## Notes
 
 - Tables are created automatically on startup; move to Alembic migrations
