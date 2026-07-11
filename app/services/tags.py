@@ -4,11 +4,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.tag import Tag
-from app.schemas.tag import TagCreate, TagUpdate
+from app.schemas.tag import TagUpdate
 
 
-async def create_tag(session: AsyncSession, payload: TagCreate) -> Tag:
-    tag = Tag(**payload.model_dump())
+async def create_tag(session: AsyncSession, *, user_id: str, name: str) -> Tag:
+    tag = Tag(user_id=user_id, name=name)
     session.add(tag)
     await session.commit()
     await session.refresh(tag)
@@ -30,12 +30,10 @@ async def list_tags(
     *,
     limit: int,
     offset: int,
-    user_id: str | None = None,
+    user_id: str,
 ) -> tuple[list[Tag], int]:
-    """Return a page of tags (alphabetical) and the total matching count."""
-    query = select(Tag)
-    if user_id is not None:
-        query = query.where(Tag.user_id == user_id)
+    """Return a page of one user's tags (alphabetical) and the total matching count."""
+    query = select(Tag).where(Tag.user_id == user_id)
 
     total = await session.scalar(select(func.count()).select_from(query.subquery())) or 0
     result = await session.scalars(query.order_by(Tag.name).limit(limit).offset(offset))

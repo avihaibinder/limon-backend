@@ -1,18 +1,10 @@
 """Service layer for users."""
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
-from app.schemas.user import UserCreate, UserUpdate
-
-
-async def create_user(session: AsyncSession, payload: UserCreate) -> User:
-    user = User(**payload.model_dump())
-    session.add(user)
-    await session.commit()
-    await session.refresh(user)
-    return user
+from app.schemas.user import UserUpdate
 
 
 async def get_user(session: AsyncSession, user_id: str) -> User | None:
@@ -22,7 +14,7 @@ async def get_user(session: AsyncSession, user_id: str) -> User | None:
 async def get_user_by_provider_subject(
     session: AsyncSession, provider: str, provider_subject: str
 ) -> User | None:
-    """Look up a user by OAuth identity — the basis for JIT provisioning later."""
+    """Look up a user by OAuth identity."""
     return await session.scalar(
         select(User).where(
             User.provider == provider,
@@ -31,18 +23,31 @@ async def get_user_by_provider_subject(
     )
 
 
-async def list_users(
+async def get_or_create_user(
     session: AsyncSession,
     *,
-    limit: int,
-    offset: int,
-) -> tuple[list[User], int]:
-    """Return a page of users (newest first) and the total count."""
-    total = await session.scalar(select(func.count()).select_from(User)) or 0
-    result = await session.scalars(
-        select(User).order_by(User.created_at.desc()).limit(limit).offset(offset)
+    provider: str,
+    provider_subject: str,
+    email: str | None = None,
+    display_name: str | None = None,
+) -> User:
+    """JIT provisioning: return the user for this OAuth identity, creating it
+    on first sight. Profile fields are only seeded at creation — later token
+    metadata never overwrites edits the user made through PATCH /users/me.
+    """
+    user = await get_user_by_provider_subject(session, provider, provider_subject)
+    if user is not None:
+        return user
+    user = User(
+        provider=provider,
+        provider_subject=provider_subject,
+        email=email,
+        display_name=display_name,
     )
-    return list(result.all()), total
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
 
 
 async def update_user(session: AsyncSession, user: User, payload: UserUpdate) -> User:

@@ -1,11 +1,14 @@
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.core.auth import get_current_user
 from app.dependencies import SessionDep
 from app.models.event import Event
 from app.schemas.event import EventCreate, EventList, EventRead, EventUpdate
 from app.services import events as events_service
 
-router = APIRouter(prefix="/events", tags=["events"])
+# Events don't reference a user yet, so authentication is a router-level gate;
+# per-user scoping comes with a user_id column when the client starts syncing.
+router = APIRouter(prefix="/events", tags=["events"], dependencies=[Depends(get_current_user)])
 
 
 async def _get_event_or_404(session: SessionDep, event_id: str) -> Event:

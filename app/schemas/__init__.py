@@ -1,6 +1,6 @@
 from app.schemas.event import EventCreate, EventList, EventRead, EventUpdate
 from app.schemas.tag import TagCreate, TagList, TagRead, TagUpdate
-from app.schemas.user import UserCreate, UserList, UserRead, UserUpdate
+from app.schemas.user import UserRead, UserUpdate
 
 __all__ = [
     "EventCreate",
@@ -11,8 +11,6 @@ __all__ = [
     "TagList",
     "TagRead",
     "TagUpdate",
-    "UserCreate",
-    "UserList",
     "UserRead",
     "UserUpdate",
 ]

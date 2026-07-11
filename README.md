@@ -35,7 +35,16 @@ Interactive docs: http://127.0.0.1:8000/docs
 ## Configuration
 
 Copy `.env.example` to `.env`. All variables use the `LIMON_` prefix
-(`LIMON_DATABASE_URL`, `LIMON_CORS_ORIGINS`, `LIMON_DEBUG`).
+(`LIMON_DATABASE_URL`, `LIMON_CORS_ORIGINS`, `LIMON_DEBUG`,
+`LIMON_SUPABASE_URL`, `LIMON_SUPABASE_JWT_SECRET`).
+
+## Authentication
+
+All API routes require a Supabase access token (`Authorization: Bearer <jwt>`).
+The client signs in with Supabase Auth (Google OAuth); we verify the token
+against the project's JWKS endpoint (derived from `LIMON_SUPABASE_URL`) —
+or the legacy HS256 shared secret if `LIMON_SUPABASE_JWT_SECRET` is set —
+and provision a local user row on first sight (see `app/core/auth.py`).
 
 ## Events API
 
@@ -49,31 +58,28 @@ Copy `.env.example` to `.env`. All variables use the `LIMON_` prefix
 
 ## Tags API
 
-Each tag belongs to a user (`user_id` foreign key, cascade on user delete) and
-names are unique per user.
+Tags belong to the authenticated user (`user_id` foreign key, cascade on user
+delete); names are unique per user. Foreign tags answer 404.
 
 | Method | Path                | Description                                          |
 | ------ | ------------------- | ---------------------------------------------------- |
-| POST   | `/api/v1/tags`      | Create a tag (201; 404 unknown user; 409 duplicate)  |
-| GET    | `/api/v1/tags`      | List tags A→Z — `limit`, `offset`, optional `user_id`|
-| GET    | `/api/v1/tags/{id}` | Fetch one tag (404 if missing)                       |
+| POST   | `/api/v1/tags`      | Create a tag for the current user (201; 409 dup)     |
+| GET    | `/api/v1/tags`      | List own tags A→Z — `limit`, `offset`                |
+| GET    | `/api/v1/tags/{id}` | Fetch one of your tags (404 if missing/foreign)      |
 | PATCH  | `/api/v1/tags/{id}` | Rename (409 if the name is taken)                    |
 | DELETE | `/api/v1/tags/{id}` | Delete (204)                                         |
 
 ## Users API
 
-Holds LimON's own user identity; designed for OAuth (rows carry `provider` +
-`provider_subject`, the token's `sub` claim). Once authentication is wired up,
-users will be provisioned automatically from verified tokens and `POST /users`
-will go away.
+LimON's own user identity (rows carry `provider` + `provider_subject`, the
+Supabase token's `sub` claim). Accounts are provisioned automatically on the
+first authenticated request — the API is self-service only.
 
-| Method | Path                 | Description                                        |
-| ------ | -------------------- | -------------------------------------------------- |
-| POST   | `/api/v1/users`      | Create a user (201; 409 on duplicate identity)     |
-| GET    | `/api/v1/users`      | List users — `limit`, `offset`                     |
-| GET    | `/api/v1/users/{id}` | Fetch one user (404 if missing)                    |
-| PATCH  | `/api/v1/users/{id}` | Update profile fields (provider identity immutable)|
-| DELETE | `/api/v1/users/{id}` | Delete (204)                                       |
+| Method | Path                | Description                                         |
+| ------ | ------------------- | --------------------------------------------------- |
+| GET    | `/api/v1/users/me`  | Fetch your profile (creates the account on first use)|
+| PATCH  | `/api/v1/users/me`  | Update profile fields (provider identity immutable) |
+| DELETE | `/api/v1/users/me`  | Delete your account and its tags (204)              |
 
 ## Tests
 

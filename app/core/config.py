@@ -15,6 +15,13 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./limon.db"
     cors_origins: list[str] = ["*"]
 
+    # Supabase project URL (https://<ref>.supabase.co). Tokens are verified
+    # against its JWKS endpoint; unset means every authenticated route 401s.
+    supabase_url: str | None = None
+    # Only for legacy Supabase projects still signing with the shared HS256
+    # secret; projects on asymmetric signing keys don't need it.
+    supabase_jwt_secret: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

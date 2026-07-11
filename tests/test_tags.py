@@ -1,61 +1,59 @@
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.models.tag import Tag
+from app.models.user import User
 
 TAGS_URL = "/api/v1/tags"
-USERS_URL = "/api/v1/users"
+ME_URL = "/api/v1/users/me"
 
 
-async def _create_user(client: AsyncClient, **overrides) -> dict:
-    payload = {
-        "provider": "google",
-        "provider_subject": "108123456789",
-        "email": "lemon@example.com",
-        "display_name": "Lemon",
-        **overrides,
-    }
-    response = await client.post(USERS_URL, json=payload)
+async def _create_tag(client: AsyncClient, name: str = "sleep") -> dict:
+    response = await client.post(TAGS_URL, json={"name": name})
     assert response.status_code == 201, response.text
     return response.json()
 
 
-async def _create_tag(client: AsyncClient, user_id: str, name: str = "sleep") -> dict:
-    response = await client.post(TAGS_URL, json={"user_id": user_id, "name": name})
-    assert response.status_code == 201, response.text
-    return response.json()
+async def _seed_other_users_tag(
+    session_factory: async_sessionmaker[AsyncSession], name: str = "sleep"
+) -> Tag:
+    """Insert a tag owned by somebody other than the authenticated test user."""
+    async with session_factory() as session:
+        other = User(provider="google", provider_subject="other-subject")
+        session.add(other)
+        await session.flush()  # materialize other.id (Python-side default)
+        tag = Tag(user_id=other.id, name=name)
+        session.add(tag)
+        await session.commit()
+        await session.refresh(tag)
+    return tag
 
 
-async def test_create_tag(client: AsyncClient) -> None:
-    user = await _create_user(client)
-    body = await _create_tag(client, user["id"])
+async def test_create_tag_belongs_to_authenticated_user(client: AsyncClient) -> None:
+    me = (await client.get(ME_URL)).json()
+    body = await _create_tag(client)
 
     assert body["name"] == "sleep"
-    assert body["user_id"] == user["id"]
+    assert body["user_id"] == me["id"]
     assert body["id"]
 
 
-async def test_create_tag_rejects_unknown_user(client: AsyncClient) -> None:
-    response = await client.post(TAGS_URL, json={"user_id": "does-not-exist", "name": "x"})
-    assert response.status_code == 404
-
-
 async def test_create_tag_rejects_duplicate_name_for_same_user(client: AsyncClient) -> None:
-    user = await _create_user(client)
-    await _create_tag(client, user["id"])
+    await _create_tag(client)
 
-    response = await client.post(TAGS_URL, json={"user_id": user["id"], "name": "sleep"})
+    response = await client.post(TAGS_URL, json={"name": "sleep"})
     assert response.status_code == 409
 
 
-async def test_create_tag_allows_same_name_for_other_user(client: AsyncClient) -> None:
-    user_a = await _create_user(client)
-    user_b = await _create_user(client, provider_subject="other-subject")
-
-    await _create_tag(client, user_a["id"])
-    await _create_tag(client, user_b["id"])
+async def test_create_tag_allows_name_already_used_by_other_user(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    await _seed_other_users_tag(session_factory, name="sleep")
+    await _create_tag(client, name="sleep")
 
 
 async def test_get_tag(client: AsyncClient) -> None:
-    user = await _create_user(client)
-    created = await _create_tag(client, user["id"])
+    created = await _create_tag(client)
 
     response = await client.get(f"{TAGS_URL}/{created['id']}")
     assert response.status_code == 200
@@ -67,14 +65,24 @@ async def test_get_tag_returns_404_for_unknown_id(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
-async def test_list_tags_filters_by_user_and_sorts_by_name(client: AsyncClient) -> None:
-    user_a = await _create_user(client)
-    user_b = await _create_user(client, provider_subject="other-subject")
-    await _create_tag(client, user_a["id"], name="mood")
-    await _create_tag(client, user_a["id"], name="anxiety")
-    await _create_tag(client, user_b["id"], name="sleep")
+async def test_other_users_tag_is_invisible(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    foreign = await _seed_other_users_tag(session_factory)
 
-    response = await client.get(TAGS_URL, params={"user_id": user_a["id"]})
+    assert (await client.get(f"{TAGS_URL}/{foreign.id}")).status_code == 404
+    assert (await client.patch(f"{TAGS_URL}/{foreign.id}", json={"name": "x"})).status_code == 404
+    assert (await client.delete(f"{TAGS_URL}/{foreign.id}")).status_code == 404
+
+
+async def test_list_tags_returns_only_own_tags_sorted_by_name(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    await _seed_other_users_tag(session_factory, name="aardvark")
+    await _create_tag(client, name="mood")
+    await _create_tag(client, name="anxiety")
+
+    response = await client.get(TAGS_URL)
     assert response.status_code == 200
     body = response.json()
 
@@ -83,29 +91,26 @@ async def test_list_tags_filters_by_user_and_sorts_by_name(client: AsyncClient) 
 
 
 async def test_rename_tag(client: AsyncClient) -> None:
-    user = await _create_user(client)
-    created = await _create_tag(client, user["id"])
+    created = await _create_tag(client)
 
     response = await client.patch(f"{TAGS_URL}/{created['id']}", json={"name": "rest"})
     assert response.status_code == 200
     body = response.json()
 
     assert body["name"] == "rest"
-    assert body["user_id"] == user["id"]
+    assert body["user_id"] == created["user_id"]
 
 
 async def test_rename_tag_rejects_existing_name(client: AsyncClient) -> None:
-    user = await _create_user(client)
-    await _create_tag(client, user["id"], name="mood")
-    created = await _create_tag(client, user["id"], name="sleep")
+    await _create_tag(client, name="mood")
+    created = await _create_tag(client, name="sleep")
 
     response = await client.patch(f"{TAGS_URL}/{created['id']}", json={"name": "mood"})
     assert response.status_code == 409
 
 
 async def test_delete_tag(client: AsyncClient) -> None:
-    user = await _create_user(client)
-    created = await _create_tag(client, user["id"])
+    created = await _create_tag(client)
 
     response = await client.delete(f"{TAGS_URL}/{created['id']}")
     assert response.status_code == 204
@@ -114,12 +119,13 @@ async def test_delete_tag(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
-async def test_deleting_user_cascades_to_their_tags(client: AsyncClient) -> None:
-    user = await _create_user(client)
-    created = await _create_tag(client, user["id"])
+async def test_deleting_account_cascades_to_tags(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    created = await _create_tag(client)
 
-    response = await client.delete(f"{USERS_URL}/{user['id']}")
+    response = await client.delete(ME_URL)
     assert response.status_code == 204
 
-    response = await client.get(f"{TAGS_URL}/{created['id']}")
-    assert response.status_code == 404
+    async with session_factory() as session:
+        assert await session.get(Tag, created["id"]) is None
