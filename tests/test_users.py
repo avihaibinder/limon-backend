@@ -28,6 +28,45 @@ async def test_me_is_stable_across_requests(client: AsyncClient) -> None:
 
 async def test_update_me_profile_fields(client: AsyncClient) -> None:
     response = await client.patch(ME_URL, json={"display_name": "Renamed"})
+async def test_create_user_allows_same_subject_on_other_provider(client: AsyncClient) -> None:
+    await _create_user(client)
+    await _create_user(client, provider="apple")
+
+
+async def test_create_user_rejects_invalid_email(client: AsyncClient) -> None:
+    response = await client.post(USERS_URL, json={**SAMPLE_USER, "email": "not-an-email"})
+    assert response.status_code == 422
+
+
+async def test_get_user(client: AsyncClient) -> None:
+    created = await _create_user(client)
+
+    response = await client.get(f"{USERS_URL}/{created['id']}")
+    assert response.status_code == 200
+    assert response.json() == created
+
+
+async def test_get_user_returns_404_for_unknown_id(client: AsyncClient) -> None:
+    response = await client.get(f"{USERS_URL}/does-not-exist")
+    assert response.status_code == 404
+
+
+async def test_list_users(client: AsyncClient) -> None:
+    await _create_user(client)
+    await _create_user(client, provider_subject="other-subject")
+
+    response = await client.get(USERS_URL)
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["total"] == 2
+    assert len(body["items"]) == 2
+
+
+async def test_update_user_profile_fields(client: AsyncClient) -> None:
+    created = await _create_user(client)
+
+    response = await client.patch(f"{USERS_URL}/{created['id']}", json={"display_name": "Renamed"})
     assert response.status_code == 200
     body = response.json()
 
