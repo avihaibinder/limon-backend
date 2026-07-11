@@ -6,6 +6,7 @@ endpoint (or the legacy HS256 shared secret) and resolve it to a local User
 row, creating one on first sight — there is no separate sign-up call.
 """
 
+import ssl
 from functools import lru_cache
 from typing import Annotated, Any
 
@@ -32,9 +33,15 @@ def _unauthorized(detail: str) -> HTTPException:
 
 @lru_cache
 def _jwks_client(supabase_url: str) -> PyJWKClient:
+    # Certificates are still fully verified, but without Python 3.13's
+    # VERIFY_X509_STRICT default — TLS-inspecting middleboxes (corporate
+    # proxies, antivirus) present slightly non-conformant CA certs that
+    # strict mode rejects, which would 401 every valid token on such machines.
+    ssl_context = ssl.create_default_context()
+    ssl_context.verify_flags &= ~ssl.VERIFY_X509_STRICT
     # PyJWKClient caches fetched keys; the blocking HTTP call happens only on
     # the first request after startup and again on key rotation.
-    return PyJWKClient(f"{supabase_url}/auth/v1/.well-known/jwks.json")
+    return PyJWKClient(f"{supabase_url}/auth/v1/.well-known/jwks.json", ssl_context=ssl_context)
 
 
 def decode_token(token: str) -> dict[str, Any]:

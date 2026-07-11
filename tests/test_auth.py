@@ -4,7 +4,7 @@ HS256 goes through the legacy shared-secret path; ES256 goes through the JWKS
 path with the key client faked out (no network in tests).
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import jwt
@@ -34,7 +34,7 @@ def _claims(**overrides) -> dict:
     return {
         "sub": "8f1c2b34-0000-4000-8000-000000000000",
         "aud": "authenticated",
-        "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        "exp": datetime.now(UTC) + timedelta(hours=1),
         "email": "lemon@example.com",
         "app_metadata": {"provider": "google"},
         "user_metadata": {"full_name": "Lemon"},
@@ -74,7 +74,7 @@ async def test_valid_token_authenticates_and_provisions(
 
 
 async def test_expired_token_is_rejected(anon_client: AsyncClient, auth_settings: None) -> None:
-    token = _hs256_token(exp=datetime.now(timezone.utc) - timedelta(minutes=1))
+    token = _hs256_token(exp=datetime.now(UTC) - timedelta(minutes=1))
     response = await anon_client.get(ME_URL, headers=_bearer(token))
     assert response.status_code == 401
 
