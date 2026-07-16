@@ -69,8 +69,13 @@ Legend: MVP = required for first release, P2 = later.
 - [ ] GPS tagging — P2
 
 ### Infra
-- [ ] Migrate DB target — evaluate Supabase (Postgres) vs. current SQLite
-- [x] Blob storage infra — MinIO running via docker-compose (bucket `limon`); app-level client still TBD once a feature needs it
+- [x] Migrate DB target — decided: Supabase (Postgres) in production via
+  `LIMON_DATABASE_URL` (asyncpg, session pooler); SQLite stays the local
+  dev/test default
+- [ ] Blob storage — decided: Google Cloud Storage (MinIO was removed from
+  docker-compose); add a storage client/service using Application Default
+  Credentials once a feature (e.g. voice notes) needs it
+- [ ] Deploy — target is Cloud Run (free tier), DB URL via Secret Manager
 - [x] CI — GitHub Actions runs lint (Ruff), format check, pytest (in-container), and a docker-compose smoke test on every push/PR
 - [ ] Testing: unit tests exist for events/tags/users; need FE test coverage too
 - [ ] Security review
@@ -129,14 +134,17 @@ machine — CI's `lint` job is what actually enforces this for everyone.
 - `docker compose up --build` runs the API in a container (`Dockerfile` +
   `docker-compose.yml`), using `uv sync --frozen` at build time and `uv run
   uvicorn ...` as the run command to mirror local dev. SQLite data is
-  persisted to the `limon-data` volume at `/app/data`. As real infra
-  (Postgres/Supabase, etc.) is added, extend `docker-compose.yml` with
-  those services rather than introducing a separate compose file.
-- `docker-compose.yml` also runs a MinIO container (S3-compatible blob
-  storage) plus a one-shot `minio-init` service that waits for MinIO's
-  healthcheck and creates the default `limon` bucket. This is infra-only
-  for now — the API receives `LIMON_S3_*` env vars but no app code reads
-  them yet; add a storage client/service once a feature (e.g. voice notes)
-  needs to upload/download blobs.
+  persisted to the `limon-data` volume at `/app/data`. As real infra is
+  added, extend `docker-compose.yml` with those services rather than
+  introducing a separate compose file.
+- Production DB is Supabase Postgres: point `LIMON_DATABASE_URL` at the
+  IPv4 session pooler (`postgresql+asyncpg://postgres.<ref>:...@aws-0-<region>.pooler.supabase.com:5432/postgres?ssl=require`).
+  The direct `db.<ref>.supabase.co` host is IPv6-only and unreachable from
+  Cloud Run. The engine uses `pool_pre_ping=True` to survive pooler/idle
+  disconnects.
+- Blob storage will be Google Cloud Storage (a MinIO container used to fill
+  this role in docker-compose; removed 2026-07-14 since no app code used
+  it). When implementing, use `google-cloud-storage` with Application
+  Default Credentials — no key-style credentials in settings.
 - This file is intentionally a starting point — update it as decisions are
   made (DB choice, auth provider, storage, etc.).

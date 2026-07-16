@@ -31,7 +31,7 @@ def create_engine(database_url: str, *, echo: bool = False, **kwargs: Any) -> As
     return engine
 
 
-engine = create_engine(settings.database_url, echo=settings.debug)
+engine = create_engine(settings.database_url, echo=settings.debug, pool_pre_ping=True)
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
 
