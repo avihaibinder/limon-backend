@@ -56,6 +56,13 @@ async def test_requests_without_token_are_rejected(anon_client: AsyncClient) -> 
         assert response.status_code in (401, 403), url
 
 
+async def test_health_is_public(anon_client: AsyncClient) -> None:
+    response = await anon_client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
 async def test_valid_token_authenticates_and_provisions(
     anon_client: AsyncClient, auth_settings: None
 ) -> None:

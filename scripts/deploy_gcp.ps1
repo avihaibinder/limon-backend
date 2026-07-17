@@ -13,7 +13,7 @@ param(
     [string] $DatabaseSecretName = 'limon-database-url',
     [string] $CorsOrigins = 'https://limon-opal.vercel.app',
     [switch] $BootstrapOnly,
-    [switch] $AllowUnauthenticated,
+    [switch] $RequireIamAuthentication,
     [switch] $SkipStorageSmoke
 )
 
@@ -132,11 +132,11 @@ $databaseUrl = $null
 Write-Host 'Database secret preflight passed.'
 
 $envVars = "^@^LIMON_SUPABASE_URL=$SupabaseUrl@LIMON_GCS_BUCKET=$bucketName@LIMON_CORS_ORIGINS=$CorsOrigins"
-$invocationFlag = if ($AllowUnauthenticated) {
-    '--allow-unauthenticated'
+$invocationFlag = if ($RequireIamAuthentication) {
+    '--no-allow-unauthenticated'
 }
 else {
-    '--no-allow-unauthenticated'
+    '--allow-unauthenticated'
 }
 Invoke-Gcloud run deploy $ServiceName `
     --project=$ProjectId `
@@ -164,7 +164,7 @@ if ($LASTEXITCODE -ne 0 -or -not $serviceUrl) {
 }
 
 $healthHeaders = @{}
-if (-not $AllowUnauthenticated) {
+if ($RequireIamAuthentication) {
     $identityToken = (& gcloud auth print-identity-token).Trim()
     if ($LASTEXITCODE -ne 0 -or -not $identityToken) {
         throw 'Could not create an identity token for the private Cloud Run health check.'

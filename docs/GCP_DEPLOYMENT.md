@@ -20,12 +20,12 @@ Do not attach a personal payment card or reuse an unrelated personal project.
 
 - Region: `europe-west3` (Frankfurt).
 - Cloud Run scales from zero to one instance for the MVP to minimize trial-credit usage.
-- Cloud Run is private by default. Public invocation requires the explicit
-  `-AllowUnauthenticated` switch because the Expo/web client cannot produce
-  Google IAM identity tokens. Application routes still verify Supabase JWTs.
-- Do not enable public invocation until every patient-owned resource is scoped
-  by the authenticated user. At present, tags are scoped but events still need
-  a `user_id` migration and ownership enforcement.
+- Cloud Run allows unauthenticated invocation by default because the Expo/web
+  client cannot produce Google IAM identity tokens. Application data routes
+  still require and verify Supabase JWTs; `/health` is intentionally public.
+- Tags are scoped by authenticated user. Events require authentication but do
+  not yet have a `user_id`; ownership enforcement remains a security-review
+  backlog item that must be completed before using the MVP with multiple users.
 - GCS uses uniform bucket-level access and enforced public-access prevention.
 - The runtime service account receives `roles/storage.objectUser` only on the
   LimON bucket and `roles/secretmanager.secretAccessor` only on the database
@@ -74,15 +74,16 @@ After the database secret has an enabled version, run the same command without
   -SupabaseUrl "https://PROJECT_REF.supabase.co"
 ```
 
-This creates a private Cloud Run service. Once event ownership is implemented
-and reviewed, add `-AllowUnauthenticated` so the Expo/web client can invoke the
-service and rely on Supabase JWT authorization:
+This creates a publicly invokable Cloud Run service so the Expo/web client can
+reach it. Supabase JWT authorization remains responsible for protecting
+application routes. To require Google IAM authentication for an administrative
+or temporary deployment, use the explicit private-mode switch:
 
 ```powershell
 .\scripts\deploy_gcp.ps1 `
   -ProjectId "TEAM_PROJECT_ID" `
   -SupabaseUrl "https://PROJECT_REF.supabase.co" `
-  -AllowUnauthenticated
+  -RequireIamAuthentication
 ```
 
 Source deployment builds the existing Dockerfile remotely with Cloud Build;
@@ -109,4 +110,4 @@ Record these outside Git once provided:
 - Name of the person who owns team billing
 - Confirmation that `limon-database-url` has an enabled version
 - Accounts that should receive deployment access
-- Confirmation that event ownership is implemented before public invocation
+- Confirmation that event ownership is implemented before multi-user testing
