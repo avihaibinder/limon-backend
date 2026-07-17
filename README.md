@@ -171,23 +171,37 @@ Compose sets `LIMON_DATABASE_URL` to point at that volume path; override any
 `.env` file as needed. As more services (a real DB, etc.) are introduced,
 they'll be added to `docker-compose.yml` alongside `api`.
 
-### Blob storage (MinIO)
+### Blob storage (Google Cloud Storage)
 
-`docker compose up` also starts a [MinIO](https://min.io/) container as an
-S3-compatible object store for future blob storage needs (e.g. voice note
-audio):
+Production blobs such as voice notes and generated PDFs are stored in a
+private Google Cloud Storage bucket configured by `LIMON_GCS_BUCKET`.
+`GCSBlobStorage` uses Application Default Credentials, so Cloud Run obtains
+credentials from its runtime service account and no key file is stored in the
+repository or environment variables.
 
-- S3 API: http://localhost:9000
-- Web console: http://localhost:9001 (default credentials `minioadmin` /
-  `minioadmin` — override via `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` in
-  `docker-compose.yml` for anything beyond local dev)
-- A `minio-init` one-shot service waits for MinIO to become healthy and
-  creates the default bucket (`limon`) automatically
-- Data persists in the `minio-data` volume across restarts
+The storage boundary lives in `app/services/storage.py`. Run the
+upload/read/delete smoke test after authenticating with Google Cloud:
 
-The API container is passed `LIMON_S3_ENDPOINT_URL`, `LIMON_S3_ACCESS_KEY`,
-`LIMON_S3_SECRET_KEY`, and `LIMON_S3_BUCKET` so a future storage client can
-pick them up; no app code uses them yet.
+```bash
+uv run python scripts/smoke_gcs.py
+```
+
+The local SQLite compose stack does not emulate GCS. Unit tests use a fake
+client and production verification runs the smoke script as a one-task Cloud
+Run Job with the same service account as the API.
+
+## Deploying to Google Cloud
+
+Cloud Run, GCS, IAM, Secret Manager, and the Frankfurt region setup are
+documented in [`docs/GCP_DEPLOYMENT.md`](docs/GCP_DEPLOYMENT.md). The included
+PowerShell script is idempotent and supports a bootstrap-only phase:
+
+```powershell
+.\scripts\deploy_gcp.ps1 `
+  -ProjectId "TEAM_PROJECT_ID" `
+  -SupabaseUrl "https://PROJECT_REF.supabase.co" `
+  -BootstrapOnly
+```
 
 ## Notes
 

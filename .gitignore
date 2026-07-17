@@ -17,6 +17,7 @@ venv/
 *.sqlite3
 
 # Tooling caches
+.tools/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
