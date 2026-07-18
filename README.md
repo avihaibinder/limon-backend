@@ -63,7 +63,9 @@ reproducible across machines and (later) Docker builds.
 
 Copy `.env.example` to `.env`. All variables use the `LIMON_` prefix
 (`LIMON_DATABASE_URL`, `LIMON_CORS_ORIGINS`, `LIMON_DEBUG`,
-`LIMON_SUPABASE_URL`, `LIMON_SUPABASE_JWT_SECRET`).
+`LIMON_SUPABASE_URL`, `LIMON_SUPABASE_JWT_SECRET`). Audio uploads add
+`LIMON_GCS_BUCKET` and `LIMON_GCS_SIGNER_SERVICE_ACCOUNT` — see
+[Blob storage (Google Cloud Storage)](#blob-storage-google-cloud-storage).
 
 ## Authentication
 
@@ -107,6 +109,24 @@ first authenticated request — the API is self-service only.
 | GET    | `/api/v1/users/me`  | Fetch your profile (creates the account on first use)|
 | PATCH  | `/api/v1/users/me`  | Update profile fields (provider identity immutable) |
 | DELETE | `/api/v1/users/me`  | Delete your account and its tags (204)              |
+
+## Audio uploads API
+
+Clients upload audio (e.g. voice notes) straight to Google Cloud Storage via a
+short-lived presigned URL — the file bytes never pass through the backend. See
+[Blob storage (Google Cloud Storage)](#blob-storage-google-cloud-storage) for
+the one-time GCP setup this endpoint needs.
+
+| Method | Path                             | Description                                                   |
+| ------ | -------------------------------- | ------------------------------------------------------------ |
+| POST   | `/api/v1/uploads/audio/presign`  | Get a signed PUT URL for one audio file (201; 400 bad type; 503 if unconfigured) |
+
+Request body is `{"content_type": "audio/mp4"}` (allowed: `audio/mp4`,
+`audio/aac`, `audio/mpeg`, `audio/ogg`, `audio/wav`, `audio/webm`). The
+response returns `upload_url`, `object_key` (`audio/{user_id}/{uuid}.ext`),
+`content_type`, and `expires_at`. The client then `PUT`s the file to
+`upload_url` with a matching `Content-Type` header. Persisting the returned
+`object_key` to a voice-note record is a separate, not-yet-implemented step.
 
 ## Tests
 
@@ -171,23 +191,123 @@ Compose sets `LIMON_DATABASE_URL` to point at that volume path; override any
 `.env` file as needed. As more services (a real DB, etc.) are introduced,
 they'll be added to `docker-compose.yml` alongside `api`.
 
-### Blob storage (MinIO)
+## Blob storage (Google Cloud Storage)
 
-`docker compose up` also starts a [MinIO](https://min.io/) container as an
-S3-compatible object store for future blob storage needs (e.g. voice note
-audio):
+Audio uploads use Google Cloud Storage. The backend generates **V4 signed PUT
+URLs** so clients upload directly to a bucket. Signing is done through
+Application Default Credentials (ADC) plus the IAM `signBlob` API — **no
+service-account key file is stored anywhere**. Everything account-specific
+lives in two env vars, so pointing this at *your own* GCP account is a
+config-only change; no code edits.
 
-- S3 API: http://localhost:9000
-- Web console: http://localhost:9001 (default credentials `minioadmin` /
-  `minioadmin` — override via `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` in
-  `docker-compose.yml` for anything beyond local dev)
-- A `minio-init` one-shot service waits for MinIO to become healthy and
-  creates the default bucket (`limon`) automatically
-- Data persists in the `minio-data` volume across restarts
+The upload endpoint returns **503** until `LIMON_GCS_BUCKET` is set — the rest
+of the API runs fine without any GCS setup.
 
-The API container is passed `LIMON_S3_ENDPOINT_URL`, `LIMON_S3_ACCESS_KEY`,
-`LIMON_S3_SECRET_KEY`, and `LIMON_S3_BUCKET` so a future storage client can
-pick them up; no app code uses them yet.
+### One-time GCP setup (your own account)
+
+Prerequisites: the [`gcloud` CLI](https://cloud.google.com/sdk/docs/install)
+installed, and a GCP project with **billing enabled** (the free tier still
+requires a billing account attached — a bucket can't be created without one).
+
+```bash
+# 1. Authenticate and select your project
+gcloud auth login                                   # your Google account
+gcloud config set project <YOUR_PROJECT_ID>
+gcloud auth application-default login               # sets up ADC (what the app uses)
+
+# 2. Enable the APIs signing and uploading need
+gcloud services enable storage.googleapis.com iamcredentials.googleapis.com
+
+# 3. Create the bucket (name must be globally unique)
+gcloud storage buckets create gs://<YOUR_BUCKET> --location=us
+
+# 4. Create the service account whose identity signs the upload URLs
+gcloud iam service-accounts create limon-signer
+
+# 5. Let YOUR user impersonate that SA, so ADC (you) can sign as it.
+#    This is what the IAM signBlob call needs; without it you get a 403.
+PROJECT=$(gcloud config get-value project)
+YOU=$(gcloud config get-value account)
+gcloud iam service-accounts add-iam-policy-binding \
+  limon-signer@$PROJECT.iam.gserviceaccount.com \
+  --member="user:$YOU" --role="roles/iam.serviceAccountTokenCreator"
+
+# 6. Let the signer SA read/write the bucket
+gcloud storage buckets add-iam-policy-binding gs://<YOUR_BUCKET> \
+  --member="serviceAccount:limon-signer@$PROJECT.iam.gserviceaccount.com" \
+  --role="roles/storage.objectAdmin"
+```
+
+IAM changes can take a minute or two to propagate — if signing 403s right
+after step 5, wait briefly and retry.
+
+### Configure the app
+
+Set these in `.env` (see `.env.example`; the values are yours, never
+committed — `.env` is git-ignored):
+
+```bash
+LIMON_GCS_BUCKET=<YOUR_BUCKET>
+LIMON_GCS_SIGNER_SERVICE_ACCOUNT=limon-signer@<YOUR_PROJECT_ID>.iam.gserviceaccount.com
+# Optional — signed-URL lifetime in seconds (default 900 = 15 min)
+# LIMON_GCS_SIGNED_URL_TTL_SECONDS=900
+```
+
+The setup above is for **local development**, where ADC is your *user* account
+(which cannot sign), so the app impersonates the signer SA. **Cloud Run works
+differently** — see below.
+
+### Verify it end-to-end (local)
+
+`scripts/verify_gcs_upload.py` does the real round trip — generates a signed
+URL via the service and PUTs a small test object to the bucket:
+
+```bash
+uv run python scripts/verify_gcs_upload.py
+```
+
+A `HTTP 200` and a printed `object_key` mean it works; the object appears under
+`audio/verify/...` in your bucket (delete it afterwards with
+`gcloud storage rm`). The unit tests mock GCS, so they need none of this setup.
+
+### Running on Cloud Run
+
+On Cloud Run there is **no key file and no `gcloud auth`** — ADC resolves to the
+service account attached to the revision, and the app signs URLs *as that SA
+itself* (via IAM `signBlob`). So you don't set `LIMON_GCS_SIGNER_SERVICE_ACCOUNT`
+there; only `LIMON_GCS_BUCKET`. What the runtime SA needs:
+
+```bash
+PROJECT=$(gcloud config get-value project)
+
+# A runtime service account for the Cloud Run revision
+gcloud iam service-accounts create limon-run --display-name="LimON Cloud Run runtime"
+
+# Read/write the bucket
+gcloud storage buckets add-iam-policy-binding gs://<YOUR_BUCKET> \
+  --member="serviceAccount:limon-run@$PROJECT.iam.gserviceaccount.com" \
+  --role="roles/storage.objectAdmin"
+
+# Sign blobs AS ITSELF: signBlob is an IAM call, so the SA needs
+# token-creator on its OWN identity. Without this, signing 403s.
+gcloud iam service-accounts add-iam-policy-binding \
+  limon-run@$PROJECT.iam.gserviceaccount.com \
+  --member="serviceAccount:limon-run@$PROJECT.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator"
+```
+
+Then deploy with that SA attached and the bucket in env (signer var omitted):
+
+```bash
+gcloud run deploy limon-backend \
+  --source . \
+  --region=<REGION> \
+  --service-account=limon-run@$PROJECT.iam.gserviceaccount.com \
+  --set-env-vars=LIMON_GCS_BUCKET=<YOUR_BUCKET>
+```
+
+(Deploy real production with your DB/Supabase settings via Secret Manager, and
+without `--allow-unauthenticated`, so the app's own auth guards the API.)
 
 ## Notes
 

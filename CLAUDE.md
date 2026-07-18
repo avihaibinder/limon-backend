@@ -72,9 +72,12 @@ Legend: MVP = required for first release, P2 = later.
 - [x] Migrate DB target — decided: Supabase (Postgres) in production via
   `LIMON_DATABASE_URL` (asyncpg, session pooler); SQLite stays the local
   dev/test default
-- [ ] Blob storage — decided: Google Cloud Storage (MinIO was removed from
-  docker-compose); add a storage client/service using Application Default
-  Credentials once a feature (e.g. voice notes) needs it
+- [~] Blob storage — Google Cloud Storage. `POST /api/v1/uploads/audio/presign`
+  returns a V4 signed PUT URL so the client uploads audio straight to GCS
+  (`app/services/storage.py`). Signs via ADC + IAM signBlob (no private key on
+  disk); config is bucket + optional signer SA only, so it repoints at any GCP
+  account by env alone. Still TODO: create the voice-note record from the
+  returned `object_key`, plus lifecycle/read-back
 - [ ] Deploy — target is Cloud Run (free tier), DB URL via Secret Manager
 - [x] CI — GitHub Actions runs lint (Ruff), format check, pytest (in-container), and a docker-compose smoke test on every push/PR
 - [ ] Testing: unit tests exist for events/tags/users; need FE test coverage too
@@ -142,9 +145,14 @@ machine — CI's `lint` job is what actually enforces this for everyone.
   The direct `db.<ref>.supabase.co` host is IPv6-only and unreachable from
   Cloud Run. The engine uses `pool_pre_ping=True` to survive pooler/idle
   disconnects.
-- Blob storage will be Google Cloud Storage (a MinIO container used to fill
-  this role in docker-compose; removed 2026-07-14 since no app code used
-  it). When implementing, use `google-cloud-storage` with Application
-  Default Credentials — no key-style credentials in settings.
+- Blob storage is Google Cloud Storage via `google-cloud-storage`, signing
+  upload URLs with Application Default Credentials + IAM signBlob — no
+  key-style credentials in settings. Account-specific values live only in
+  `LIMON_GCS_BUCKET` / `LIMON_GCS_SIGNER_SERVICE_ACCOUNT`. Local dev on a
+  free-tier account:
+  `gcloud auth application-default login`, create a bucket + a signer SA,
+  grant your user `roles/iam.serviceAccountTokenCreator` on that SA and the
+  SA `roles/storage.objectAdmin` on the bucket, then set the two env vars.
+  On Cloud Run, the attached service account is the ADC identity.
 - This file is intentionally a starting point — update it as decisions are
   made (DB choice, auth provider, storage, etc.).
