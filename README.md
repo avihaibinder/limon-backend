@@ -309,6 +309,22 @@ gcloud run deploy limon-backend \
 (Deploy real production with your DB/Supabase settings via Secret Manager, and
 without `--allow-unauthenticated`, so the app's own auth guards the API.)
 
+### Automated deployment
+
+The manual steps above are scripted end-to-end (bootstrap IAM + bucket +
+Secret Manager, deploy, run a GCS round-trip smoke test) — idempotent, so
+re-running ships a new revision:
+
+```bash
+scripts/deploy_gcp.sh --project <id> --supabase-url https://<ref>.supabase.co   # macOS/Linux/Cloud Shell
+pwsh scripts/deploy_gcp.ps1 -ProjectId <id> -SupabaseUrl https://<ref>.supabase.co  # Windows
+```
+
+Both take `--bootstrap-only` (infra only, no deploy) and `--require-iam-auth`
+(deploy without `--allow-unauthenticated`). The DB URL is read from a Secret
+Manager secret (`limon-database-url`) rather than passed on the command line.
+See [`docs/GCP_DEPLOYMENT.md`](docs/GCP_DEPLOYMENT.md) for the full walkthrough.
+
 ## Notes
 
 - Tables are created automatically on startup; switch to Alembic migrations

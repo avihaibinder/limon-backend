@@ -1,19 +1,25 @@
-"""Google Cloud Storage upload presigning.
+"""Google Cloud Storage boundary — both directions of blob access.
 
-The client asks us for a short-lived URL, then uploads its audio file straight
-to GCS with a single PUT — the bytes never pass through this backend.
+Two complementary ways features touch GCS live here:
 
-Signing a V4 URL requires a *service account* identity. Rather than shipping a
-private key (see the "no key-style credentials in settings" decision in
-CLAUDE.md), we sign through the IAM ``signBlob`` API using whatever identity
-Application Default Credentials resolves to at runtime:
+* **Client-direct upload** via a short-lived V4 *presigned* URL
+  (``presign_audio_upload``): the client PUTs its audio straight to GCS and the
+  bytes never pass through this backend. This is how the app captures voice
+  notes.
+* **Server-side byte I/O** via the ``BlobStorage`` protocol
+  (``get_blob_storage``): the backend uploads/downloads/deletes objects itself,
+  for anything it generates or must read (e.g. PDF export, transcription
+  inputs). Depending on the ``BlobStorage`` protocol rather than the Google SDK
+  keeps domain services testable and leaves room for another implementation.
 
-* locally, ADC is your user login (``gcloud auth application-default login``)
-  impersonating the signer SA you granted ``roles/iam.serviceAccountTokenCreator``;
-* on Cloud Run, ADC is the attached service account, signing as itself.
+Both rely on Application Default Credentials — no key file anywhere. Nothing is
+tied to a specific GCP account: the bucket (and, for signing, an optional signer
+SA) come from settings, so repointing at another account is config-only.
 
-Nothing here is tied to a specific GCP account — the bucket and signer SA come
-from settings, so repointing at another (free-tier) account is config-only.
+Signing note: producing a V4 signed URL needs a *service account* identity and,
+because neither runtime identity holds a local private key, routes through the
+IAM ``signBlob`` API. Local dev impersonates a configured signer SA; Cloud Run
+signs as its own attached SA. See ``_signed_url_signing_kwargs``.
 """
 
 from __future__ import annotations
@@ -21,13 +27,19 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from dataclasses import dataclass
+from functools import lru_cache
+from typing import Protocol
 
 import google.auth
 import google.auth.transport.requests
 from google.auth import impersonated_credentials
 from google.cloud import storage
+from google.cloud.storage.retry import DEFAULT_RETRY
 
 from app.core.config import get_settings
+
+_DEFAULT_TIMEOUT_SECONDS = 30
+_RETRY = DEFAULT_RETRY.with_deadline(_DEFAULT_TIMEOUT_SECONDS)
 
 # GCS object key layout for audio uploads: one prefix per user keeps listing
 # and lifecycle rules simple, and a UUID avoids collisions / guessable keys.
@@ -35,16 +47,15 @@ _AUDIO_PREFIX = "audio"
 
 # Content types we let clients presign an upload for. Restricting this keeps a
 # presign URL from being repurposed to store arbitrary payloads.
-_ALLOWED_AUDIO_CONTENT_TYPES = frozenset(
-    {
-        "audio/mp4",  # .m4a — Expo/iOS default
-        "audio/aac",
-        "audio/mpeg",  # .mp3
-        "audio/ogg",
-        "audio/wav",
-        "audio/webm",
-    }
-)
+_AUDIO_EXTENSIONS = {
+    "audio/mp4": "m4a",  # .m4a — Expo/iOS default
+    "audio/aac": "aac",
+    "audio/mpeg": "mp3",  # .mp3
+    "audio/ogg": "ogg",
+    "audio/wav": "wav",
+    "audio/webm": "webm",
+}
+_ALLOWED_AUDIO_CONTENT_TYPES = frozenset(_AUDIO_EXTENSIONS)
 
 
 class StorageNotConfiguredError(RuntimeError):
@@ -53,6 +64,118 @@ class StorageNotConfiguredError(RuntimeError):
 
 class UnsupportedContentTypeError(ValueError):
     """Raised for a content type outside the audio allowlist (router -> 400)."""
+
+
+# ---------------------------------------------------------------------------
+# Server-side byte I/O — the BlobStorage protocol and its GCS implementation.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class StoredBlob:
+    """Provider-neutral metadata returned after an upload."""
+
+    bucket: str
+    name: str
+    generation: int | None
+    size: int | None
+    content_type: str | None
+
+
+class BlobStorage(Protocol):
+    """Minimal blob operations required by LimON features."""
+
+    def upload(self, name: str, data: bytes, *, content_type: str) -> StoredBlob: ...
+
+    def download(self, name: str) -> bytes: ...
+
+    def delete(self, name: str, *, generation: int) -> None: ...
+
+
+class GCSBlobStorage:
+    """Private Google Cloud Storage implementation using ambient credentials."""
+
+    def __init__(
+        self,
+        bucket_name: str,
+        *,
+        client: storage.Client | None = None,
+        timeout: int = _DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        if not bucket_name.strip():
+            raise ValueError("bucket_name must not be blank")
+
+        # storage.Client() uses Application Default Credentials. On Cloud Run
+        # these come from the assigned service account, so no key file is used.
+        self._client = client or storage.Client()
+        self._bucket = self._client.bucket(bucket_name)
+        self._timeout = timeout
+
+    @property
+    def bucket_name(self) -> str:
+        return self._bucket.name
+
+    def upload(self, name: str, data: bytes, *, content_type: str) -> StoredBlob:
+        """Create a new private object and fail if its name already exists."""
+        self._validate_name(name)
+        if not content_type.strip():
+            raise ValueError("content_type must not be blank")
+
+        blob = self._bucket.blob(name)
+        blob.upload_from_string(
+            data,
+            content_type=content_type,
+            if_generation_match=0,
+            timeout=self._timeout,
+            retry=_RETRY,
+            checksum="auto",
+        )
+        return StoredBlob(
+            bucket=self.bucket_name,
+            name=name,
+            generation=self._as_int(blob.generation),
+            size=self._as_int(blob.size),
+            content_type=blob.content_type or content_type,
+        )
+
+    def download(self, name: str) -> bytes:
+        self._validate_name(name)
+        return self._bucket.blob(name).download_as_bytes(
+            timeout=self._timeout,
+            retry=_RETRY,
+            checksum="auto",
+        )
+
+    def delete(self, name: str, *, generation: int) -> None:
+        self._validate_name(name)
+        self._bucket.blob(name).delete(
+            timeout=self._timeout,
+            retry=_RETRY,
+            if_generation_match=generation,
+        )
+
+    @staticmethod
+    def _validate_name(name: str) -> None:
+        if not name or not name.strip():
+            raise ValueError("blob name must not be blank")
+
+    @staticmethod
+    def _as_int(value: int | str | None) -> int | None:
+        return int(value) if value is not None else None
+
+
+@lru_cache
+def get_blob_storage() -> GCSBlobStorage:
+    """Build the production storage adapter lazily from application settings."""
+    bucket_name = get_settings().gcs_bucket
+    if bucket_name is None:
+        raise StorageNotConfiguredError("Blob storage is not configured (set LIMON_GCS_BUCKET).")
+    return GCSBlobStorage(bucket_name)
+
+
+# ---------------------------------------------------------------------------
+# Client-direct upload — presigned V4 URLs.
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -66,15 +189,7 @@ class PresignedUpload:
 
 
 def _object_key(user_id: str, content_type: str) -> str:
-    extension = {
-        "audio/mp4": "m4a",
-        "audio/aac": "aac",
-        "audio/mpeg": "mp3",
-        "audio/ogg": "ogg",
-        "audio/wav": "wav",
-        "audio/webm": "webm",
-    }[content_type]
-    return f"{_AUDIO_PREFIX}/{user_id}/{uuid.uuid4()}.{extension}"
+    return f"{_AUDIO_PREFIX}/{user_id}/{uuid.uuid4()}.{_AUDIO_EXTENSIONS[content_type]}"
 
 
 def _signed_url_signing_kwargs() -> dict:
