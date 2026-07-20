@@ -12,6 +12,9 @@ venv/
 # Environment
 .env
 
+# local dev files
+.spec-local/
+
 # Database
 *.db
 *.sqlite3
