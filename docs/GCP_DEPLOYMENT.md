@@ -29,7 +29,9 @@ Do not attach a personal payment card or reuse an unrelated personal project.
 - GCS uses uniform bucket-level access and enforced public-access prevention.
 - The runtime service account receives `roles/storage.objectUser` only on the
   LimON bucket and `roles/secretmanager.secretAccessor` only on the database
-  secret.
+  secret. It also receives `roles/iam.serviceAccountTokenCreator` on its own
+  identity so the backend can create short-lived signed upload URLs through
+  IAM `signBlob` without storing a private key.
 - Cloud Run receives credentials from its service account through Application
   Default Credentials. No service-account key file is created.
 
