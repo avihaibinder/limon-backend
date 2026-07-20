@@ -64,7 +64,8 @@ Invoke-Gcloud services enable `
     cloudbuild.googleapis.com `
     artifactregistry.googleapis.com `
     storage.googleapis.com `
-    secretmanager.googleapis.com
+    secretmanager.googleapis.com `
+    iamcredentials.googleapis.com
 
 if (-not (Test-GcloudResource iam service-accounts describe $runtimeServiceAccount `
         --project=$ProjectId)) {
@@ -85,6 +86,14 @@ if (-not (Test-GcloudResource storage buckets describe "gs://$bucketName" `
 Invoke-Gcloud storage buckets add-iam-policy-binding "gs://$bucketName" `
     --member="serviceAccount:$runtimeServiceAccount" `
     --role='roles/storage.objectUser'
+
+# Signed URLs use IAM signBlob instead of a downloaded private key. On Cloud
+# Run, the attached runtime service account signs as itself, so it needs the
+# token-creator role on its own identity.
+Invoke-Gcloud iam service-accounts add-iam-policy-binding $runtimeServiceAccount `
+    --project=$ProjectId `
+    --member="serviceAccount:$runtimeServiceAccount" `
+    --role='roles/iam.serviceAccountTokenCreator'
 
 if (-not (Test-GcloudResource secrets describe $DatabaseSecretName --project=$ProjectId)) {
     Invoke-Gcloud secrets create $DatabaseSecretName `

@@ -306,8 +306,10 @@ gcloud run deploy limon-backend \
   --set-env-vars=LIMON_GCS_BUCKET=<YOUR_BUCKET>
 ```
 
-(Deploy real production with your DB/Supabase settings via Secret Manager, and
-without `--allow-unauthenticated`, so the app's own auth guards the API.)
+For the Expo/web client, keep Cloud Run publicly invokable with
+`--allow-unauthenticated`; application routes remain protected by Supabase JWT
+verification. Use Cloud Run IAM authentication only for administrative or
+non-client deployments.
 
 ### Automated deployment
 
