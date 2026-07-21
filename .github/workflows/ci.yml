@@ -31,6 +31,7 @@ jobs:
       - name: Run pytest in the api container
         run: |
           docker compose run --rm --no-deps \
+            --user root \
             -v "${{ github.workspace }}:/app" \
             api sh -c "uv sync --frozen --extra dev && uv run pytest"
 
