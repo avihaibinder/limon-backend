@@ -3,9 +3,10 @@
 Two complementary ways features touch GCS live here:
 
 * **Client-direct upload** via a short-lived V4 *presigned* URL
-  (``presign_audio_upload``): the client PUTs its audio straight to GCS and the
-  bytes never pass through this backend. This is how the app captures voice
-  notes.
+  (``presign_put``): the client PUTs its audio straight to GCS and the bytes
+  never pass through this backend. This is how the app captures voice notes.
+  The object key is minted by the events service (``v0/{sub}/{recordId}.m4a``)
+  and passed in; this module only signs it.
 * **Server-side byte I/O** via the ``BlobStorage`` protocol
   (``get_blob_storage``): the backend uploads/downloads/deletes objects itself,
   for anything it generates or must read (e.g. PDF export, transcription
@@ -25,7 +26,6 @@ signs as its own attached SA. See ``_signed_url_signing_kwargs``.
 from __future__ import annotations
 
 import datetime as dt
-import uuid
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Protocol
@@ -41,29 +41,14 @@ from app.core.config import get_settings
 _DEFAULT_TIMEOUT_SECONDS = 30
 _RETRY = DEFAULT_RETRY.with_deadline(_DEFAULT_TIMEOUT_SECONDS)
 
-# GCS object key layout for audio uploads: one prefix per user keeps listing
-# and lifecycle rules simple, and a UUID avoids collisions / guessable keys.
-_AUDIO_PREFIX = "audio"
-
-# Content types we let clients presign an upload for. Restricting this keeps a
-# presign URL from being repurposed to store arbitrary payloads.
-_AUDIO_EXTENSIONS = {
-    "audio/mp4": "m4a",  # .m4a — Expo/iOS default
-    "audio/aac": "aac",
-    "audio/mpeg": "mp3",  # .mp3
-    "audio/ogg": "ogg",
-    "audio/wav": "wav",
-    "audio/webm": "webm",
-}
-_ALLOWED_AUDIO_CONTENT_TYPES = frozenset(_AUDIO_EXTENSIONS)
+# Hard upload cap baked into the signed URL as x-goog-content-length-range so an
+# over-cap PUT is rejected by GCS and no bytes land (contract "Size limit": 25 MB,
+# kept at or below the transcription endpoint's own limit). 25 * 1024 * 1024.
+_MAX_AUDIO_BYTES = 26214400
 
 
 class StorageNotConfiguredError(RuntimeError):
     """Raised when no GCS bucket is configured (the router maps this to 503)."""
-
-
-class UnsupportedContentTypeError(ValueError):
-    """Raised for a content type outside the audio allowlist (router -> 400)."""
 
 
 # ---------------------------------------------------------------------------
@@ -178,20 +163,6 @@ def get_blob_storage() -> GCSBlobStorage:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class PresignedUpload:
-    """Everything the client needs to PUT one object and reference it later."""
-
-    upload_url: str
-    object_key: str
-    content_type: str
-    expires_at: dt.datetime
-
-
-def _object_key(user_id: str, content_type: str) -> str:
-    return f"{_AUDIO_PREFIX}/{user_id}/{uuid.uuid4()}.{_AUDIO_EXTENSIONS[content_type]}"
-
-
 def _signed_url_signing_kwargs() -> dict:
     """Build the kwargs `blob.generate_signed_url` needs to sign a V4 URL.
 
@@ -262,33 +233,27 @@ def _client() -> storage.Client:
     return storage.Client()
 
 
-def presign_audio_upload(user_id: str, content_type: str) -> PresignedUpload:
-    """Create a short-lived V4 signed URL for a single audio PUT upload.
+def presign_put(object_key: str, content_type: str) -> str:
+    """Create a short-lived V4 signed URL for a single PUT upload to ``object_key``.
 
-    Raises StorageNotConfiguredError if no bucket is set, and
-    UnsupportedContentTypeError if content_type is not an allowed audio type.
+    The events service mints the key (``v0/{sub}/{recordId}.m4a``) and calls this
+    to hand the client a direct-to-GCS upload target. The 25 MB cap is baked into
+    the signature via ``x-goog-content-length-range``; the client must echo that
+    header and the ``Content-Type`` exactly, or GCS rejects the PUT.
+
+    Raises StorageNotConfiguredError if no bucket is set.
     """
     settings = get_settings()
     if settings.gcs_bucket is None:
         raise StorageNotConfiguredError("LIMON_GCS_BUCKET is not set")
-    if content_type not in _ALLOWED_AUDIO_CONTENT_TYPES:
-        raise UnsupportedContentTypeError(content_type)
 
-    object_key = _object_key(user_id, content_type)
     ttl = dt.timedelta(seconds=settings.gcs_signed_url_ttl_seconds)
-
     blob = _client().bucket(settings.gcs_bucket).blob(object_key)
-    upload_url = blob.generate_signed_url(
+    return blob.generate_signed_url(
         version="v4",
         expiration=ttl,
         method="PUT",
         content_type=content_type,
+        headers={"x-goog-content-length-range": f"0,{_MAX_AUDIO_BYTES}"},
         **_signed_url_signing_kwargs(),
-    )
-
-    return PresignedUpload(
-        upload_url=upload_url,
-        object_key=object_key,
-        content_type=content_type,
-        expires_at=dt.datetime.now(dt.UTC) + ttl,
     )

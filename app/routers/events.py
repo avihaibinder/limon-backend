@@ -3,8 +3,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.core.auth import CurrentUserDep, get_current_user
 from app.dependencies import SessionDep
 from app.models.event import Event
-from app.schemas.event import EventCreate, EventList, EventRead, EventUpdate
+from app.schemas.event import (
+    EventCreate,
+    EventCreateResponse,
+    EventList,
+    EventRead,
+    EventUpdate,
+)
 from app.services import events as events_service
+from app.services.storage import StorageNotConfiguredError
 
 # Authentication is a router-level gate; create stamps the owner from the token.
 # Per-user read/write scoping (filtering every query by user_id) lands in domain 07.
@@ -21,12 +28,31 @@ async def _get_event_or_404(session: SessionDep, event_id: str) -> Event:
     return event
 
 
-@router.post("", response_model=EventRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=EventCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_event(
     session: SessionDep, current_user: CurrentUserDep, payload: EventCreate
-) -> Event:
-    """Create a new event owned by the authenticated user."""
-    return await events_service.create_event(session, payload, user_id=current_user.id)
+) -> EventCreateResponse:
+    """Create an event owned by the authenticated user.
+
+    Audio events also get a pending recording row and a direct-to-GCS
+    ``signedUrl``; text events get neither. ``clientEventId`` makes this
+    idempotent (a retry returns the same event with a fresh ``signedUrl``).
+    """
+    try:
+        event, signed_url = await events_service.create_event(
+            session, payload, user_id=current_user.id
+        )
+    except StorageNotConfiguredError as exc:
+        # Audio upload has no bucket to sign against; the caller did nothing wrong.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Audio uploads are not configured (set LIMON_GCS_BUCKET).",
+        ) from exc
+    return EventCreateResponse(
+        event=EventRead.model_validate(event),
+        record_id=event.recording_id,
+        signed_url=signed_url,
+    )
 
 
 @router.get("", response_model=EventList)

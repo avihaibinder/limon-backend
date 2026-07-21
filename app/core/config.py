@@ -62,9 +62,9 @@ class Settings(BaseSettings):
 
     # Google Cloud Storage bucket for blob storage — server-side byte I/O
     # (BlobStorage) and the target for client-direct upload presign URLs. Unset
-    # means the uploads endpoint 503s and get_blob_storage() raises. Nothing
-    # account-specific lives in code, so pointing this (and the signer SA below)
-    # at a different GCP account is the only change needed to move environments.
+    # means POST /events for an audio event 503s and get_blob_storage() raises.
+    # Nothing account-specific lives in code, so pointing this (and the signer SA
+    # below) at a different GCP account is the only change needed to move envs.
     gcs_bucket: str | None = None
     # Service account whose identity signs the V4 upload URLs. Signing needs a
     # service-account identity; with ADC we call the IAM signBlob API as this
