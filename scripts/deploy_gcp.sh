@@ -13,6 +13,8 @@
 #
 # Common flags:
 #   --region <r>            (default: europe-west3)
+#   --storage-region <r>    (default: us-east1; Free Tier eligible)
+#   --storage-bucket <n>    (default: <project>-limon-blobs-<storage-region>)
 #   --service-name <n>      (default: limon-api)
 #   --cors-origins <csv>    (default: https://limon-opal.vercel.app)
 #   --bootstrap-only        create infra, then stop (no deploy)
@@ -28,6 +30,8 @@ set -euo pipefail
 
 # ---- defaults -------------------------------------------------------------
 REGION="europe-west3"
+STORAGE_REGION="us-east1"
+STORAGE_BUCKET_NAME=""
 SERVICE_NAME="limon-api"
 DATABASE_SECRET_NAME="limon-database-url"
 CORS_ORIGINS="https://limon-opal.vercel.app"
@@ -45,6 +49,8 @@ while [[ $# -gt 0 ]]; do
     --project)             PROJECT_ID="$2"; shift 2 ;;
     --supabase-url)        SUPABASE_URL="$2"; shift 2 ;;
     --region)              REGION="$2"; shift 2 ;;
+    --storage-region)      STORAGE_REGION="$2"; shift 2 ;;
+    --storage-bucket)      STORAGE_BUCKET_NAME="$2"; shift 2 ;;
     --service-name)        SERVICE_NAME="$2"; shift 2 ;;
     --cors-origins)        CORS_ORIGINS="$2"; shift 2 ;;
     --database-secret)     DATABASE_SECRET_NAME="$2"; shift 2 ;;
@@ -62,10 +68,12 @@ done
   || die "--supabase-url must look like https://<ref>.supabase.co"
 command -v gcloud >/dev/null 2>&1 \
   || die "gcloud is not installed. Install the Google Cloud CLI first."
+[[ "$STORAGE_REGION" =~ ^(us-west1|us-central1|us-east1)$ ]] \
+  || die "--storage-region must be us-west1, us-central1, or us-east1"
 
 RUNTIME_SA_NAME="limon-api-runtime"
 RUNTIME_SA="${RUNTIME_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
-BUCKET_NAME="${PROJECT_ID}-limon-blobs"
+BUCKET_NAME="${STORAGE_BUCKET_NAME:-${PROJECT_ID}-limon-blobs-${STORAGE_REGION}}"
 
 # gcloud resource probes return non-zero when the resource is absent; swallow
 # that so `set -e` doesn't abort the "create if missing" checks.
@@ -98,9 +106,15 @@ fi
 if ! exists storage buckets describe "gs://$BUCKET_NAME" --project="$PROJECT_ID"; then
   gcloud storage buckets create "gs://$BUCKET_NAME" \
     --project="$PROJECT_ID" \
-    --location="$REGION" \
+    --location="$STORAGE_REGION" \
+    --default-storage-class="STANDARD" \
     --uniform-bucket-level-access \
     --public-access-prevention
+else
+  actual_storage_region=$(gcloud storage buckets describe "gs://$BUCKET_NAME" \
+    --project="$PROJECT_ID" --format='value(location)')
+  [[ "${actual_storage_region,,}" == "${STORAGE_REGION,,}" ]] \
+    || die "bucket '$BUCKET_NAME' is in '$actual_storage_region', expected '$STORAGE_REGION'. Bucket locations cannot be changed; use a different --storage-bucket."
 fi
 
 # Read/write objects (server-side BlobStorage upload/download/delete).

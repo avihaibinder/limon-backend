@@ -9,6 +9,10 @@ param(
     [string] $SupabaseUrl,
 
     [string] $Region = 'europe-west3',
+    [ValidateSet('us-west1', 'us-central1', 'us-east1')]
+    [string] $StorageRegion = 'us-east1',
+    [ValidatePattern('^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$')]
+    [string] $StorageBucketName,
     [string] $ServiceName = 'limon-api',
     [string] $DatabaseSecretName = 'limon-database-url',
     [string] $CorsOrigins = 'https://limon-opal.vercel.app',
@@ -20,7 +24,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $runtimeServiceAccountName = 'limon-api-runtime'
 $runtimeServiceAccount = "$runtimeServiceAccountName@$ProjectId.iam.gserviceaccount.com"
-$bucketName = "$ProjectId-limon-blobs"
+$bucketName = if ($StorageBucketName) {
+    $StorageBucketName
+}
+else {
+    "$ProjectId-limon-blobs-$StorageRegion"
+}
 
 function Invoke-Gcloud {
     param([Parameter(ValueFromRemainingArguments)][string[]] $CommandArgs)
@@ -78,9 +87,18 @@ if (-not (Test-GcloudResource storage buckets describe "gs://$bucketName" `
         --project=$ProjectId)) {
     Invoke-Gcloud storage buckets create "gs://$bucketName" `
         --project=$ProjectId `
-        --location=$Region `
+        --location=$StorageRegion `
+        --default-storage-class='STANDARD' `
         --uniform-bucket-level-access `
         --public-access-prevention
+}
+else {
+    $actualStorageRegion = (& gcloud storage buckets describe "gs://$bucketName" `
+        --project=$ProjectId `
+        --format='value(location)').Trim()
+    if ($LASTEXITCODE -ne 0 -or $actualStorageRegion -ine $StorageRegion) {
+        throw "Bucket '$bucketName' is in '$actualStorageRegion', expected '$StorageRegion'. Bucket locations cannot be changed; use a different StorageBucketName."
+    }
 }
 
 Invoke-Gcloud storage buckets add-iam-policy-binding "gs://$bucketName" `

@@ -1,8 +1,9 @@
 # Google Cloud deployment
 
 LimON runs as one FastAPI service on Cloud Run and stores private blobs in
-Google Cloud Storage. All resources use `europe-west3` (Frankfurt), matching
-the Supabase database region.
+Google Cloud Storage. Cloud Run uses `europe-west3` (Frankfurt), matching the
+Supabase database region. The private Standard Storage bucket uses `us-east1`
+so MVP usage can qualify for the Google Cloud Free Tier storage allowance.
 
 ## What the team must provide
 
@@ -18,7 +19,12 @@ Do not attach a personal payment card or reuse an unrelated personal project.
 
 ## Architecture and security defaults
 
-- Region: `europe-west3` (Frankfurt).
+- Cloud Run region: `europe-west3` (Frankfurt).
+- Cloud Storage region: `us-east1` (Free Tier eligible). The regions are
+  intentionally independent; changing `-Region` does not move storage.
+- Free Tier is a usage allowance, not a hard spending cap. Storage, operation,
+  and data-transfer usage must remain within Google's current monthly limits;
+  billing budget alerts notify the team but do not stop resources automatically.
 - Cloud Run scales from zero to one instance for the MVP to minimize trial-credit usage.
 - Cloud Run allows unauthenticated invocation by default because the Expo/web
   client cannot produce Google IAM identity tokens. Application data routes
@@ -54,9 +60,21 @@ before deployment:
   -BootstrapOnly
 ```
 
-The script enables the required APIs, creates the private Frankfurt bucket,
+The script enables the required APIs, creates the private `us-east1` bucket,
 runtime service account, least-privilege IAM bindings, and an empty Secret
 Manager secret named `limon-database-url`.
+
+Bucket locations cannot be changed after creation. An existing European bucket
+must be replaced with a new name and kept until upload and signed-URL checks
+pass. Override the defaults explicitly when needed:
+
+```powershell
+.\scripts\deploy_gcp.ps1 `
+  -ProjectId "TEAM_PROJECT_ID" `
+  -SupabaseUrl "https://PROJECT_REF.supabase.co" `
+  -StorageRegion "us-east1" `
+  -StorageBucketName "TEAM_PROJECT_ID-limon-blobs-us-east1"
+```
 
 An authorized teammate must add the Supabase session-pooler URL as the first
 secret version in the Google Cloud console. The expected SQLAlchemy form is:
