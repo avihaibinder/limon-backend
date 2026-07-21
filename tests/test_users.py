@@ -10,11 +10,10 @@ async def test_get_me_provisions_and_returns_profile(client: AsyncClient) -> Non
     assert response.status_code == 200, response.text
     body = response.json()
 
+    assert body["id"] == TEST_IDENTITY["sub"]  # id is the Supabase sub
     assert body["provider"] == TEST_IDENTITY["provider"]
-    assert body["provider_subject"] == TEST_IDENTITY["provider_subject"]
     assert body["email"] == TEST_IDENTITY["email"]
     assert body["display_name"] == TEST_IDENTITY["display_name"]
-    assert body["id"]
     assert body["created_at"]
     assert body["updated_at"]
 
@@ -43,13 +42,13 @@ async def test_update_me_rejects_invalid_email(client: AsyncClient) -> None:
     assert response.status_code == 422
 
 
-async def test_delete_me_then_next_request_provisions_fresh_account(client: AsyncClient) -> None:
+async def test_delete_me_then_next_request_reprovisions_same_id(client: AsyncClient) -> None:
     original = (await client.get(ME_URL)).json()
 
     response = await client.delete(ME_URL)
     assert response.status_code == 204
 
-    # Same OAuth identity signing in again gets a brand-new account.
+    # The id is the Supabase sub, so signing in again re-provisions the same id
+    # (a fresh row, but keyed by the same identity).
     recreated = (await client.get(ME_URL)).json()
-    assert recreated["id"] != original["id"]
-    assert recreated["provider_subject"] == original["provider_subject"]
+    assert recreated["id"] == original["id"] == TEST_IDENTITY["sub"]

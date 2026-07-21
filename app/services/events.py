@@ -7,8 +7,8 @@ from app.models.event import Event
 from app.schemas.event import EventCreate, EventUpdate
 
 
-async def create_event(session: AsyncSession, payload: EventCreate) -> Event:
-    event = Event(**payload.model_dump())
+async def create_event(session: AsyncSession, payload: EventCreate, *, user_id: str) -> Event:
+    event = Event(**payload.model_dump(), user_id=user_id)
     session.add(event)
     await session.commit()
     await session.refresh(event)
@@ -29,9 +29,9 @@ async def list_events(
     """Return a page of events (newest first) and the total matching count."""
     query = select(Event)
     if tag is not None:
-        # Tags are stored as a JSON array; unpack it with SQLite's json_each.
+        # tag_ids is a JSON array of tag id strings; unpack it with SQLite's json_each.
         query = query.where(
-            text(":tag IN (SELECT value FROM json_each(events.tags))").bindparams(tag=tag)
+            text(":tag IN (SELECT value FROM json_each(events.tag_ids))").bindparams(tag=tag)
         )
 
     total = await session.scalar(select(func.count()).select_from(query.subquery())) or 0

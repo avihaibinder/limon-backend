@@ -9,7 +9,11 @@ class EventBase(BaseModel):
     title: str = Field(min_length=1, max_length=200, examples=["Feeling a bit overwhelmed today"])
     description: str | None = Field(default=None, max_length=2000)
     occurred_at: datetime = Field(description="When the event happened.")
-    tags: list[str] = Field(default_factory=list, examples=[["mood", "sleep"]])
+    tag_ids: list[str] = Field(
+        default_factory=list,
+        description="tags.id strings this event carries.",
+        examples=[["3f2504e0-4f89-41d3-9a0c-0305e82c3301"]],
+    )
 
 
 class EventCreate(EventBase):
@@ -22,7 +26,7 @@ class EventUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
     occurred_at: datetime | None = None
-    tags: list[str] | None = None
+    tag_ids: list[str] | None = None
 
 
 class EventRead(EventBase):

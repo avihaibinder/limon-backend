@@ -13,7 +13,7 @@ from app.models.user import User
 
 
 async def _seed_user(session: AsyncSession) -> User:
-    user = User(provider="google", provider_subject="subj-1", email="a@example.com")
+    user = User(id="subj-1", provider="google", email="a@example.com")
     session.add(user)
     await session.flush()
     return user
@@ -34,6 +34,7 @@ async def test_recording_and_audio_event_roundtrip(
         await session.flush()
 
         event = Event(
+            user_id=user.id,
             type="audio",
             title=None,
             occurred_at=datetime.now(UTC),
@@ -64,7 +65,8 @@ async def test_event_defaults_to_text_type_with_no_recording(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_factory() as session:
-        event = Event(title="A typed note", occurred_at=datetime.now(UTC))
+        user = await _seed_user(session)
+        event = Event(user_id=user.id, title="A typed note", occurred_at=datetime.now(UTC))
         session.add(event)
         await session.commit()
         event_id = event.id

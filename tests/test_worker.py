@@ -24,7 +24,7 @@ from app.services.transcriber import (
 
 async def _seed(session: AsyncSession) -> tuple[str, str]:
     """Create a user + pending recording + linked audio event; return (recId, evId)."""
-    user = User(provider="google", provider_subject="s", email="a@example.com")
+    user = User(id="s", provider="google", email="a@example.com")
     session.add(user)
     await session.flush()
     recording = Recording(
@@ -33,7 +33,11 @@ async def _seed(session: AsyncSession) -> tuple[str, str]:
     session.add(recording)
     await session.flush()
     event = Event(
-        type="audio", title=None, occurred_at=datetime.now(UTC), recording_id=recording.id
+        user_id=user.id,
+        type="audio",
+        title=None,
+        occurred_at=datetime.now(UTC),
+        recording_id=recording.id,
     )
     session.add(event)
     await session.commit()

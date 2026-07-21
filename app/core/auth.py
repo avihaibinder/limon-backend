@@ -76,12 +76,15 @@ async def get_current_user(
     if credentials is None:
         raise _unauthorized("Not authenticated")
     claims = decode_token(credentials.credentials)
+    sub = claims.get("sub")
+    if not sub:
+        raise _unauthorized("Token is missing a subject (sub) claim")
     app_metadata = claims.get("app_metadata") or {}
     user_metadata = claims.get("user_metadata") or {}
     return await users_service.get_or_create_user(
         session,
+        sub=sub,
         provider=app_metadata.get("provider") or "supabase",
-        provider_subject=claims["sub"],
         email=claims.get("email"),
         display_name=user_metadata.get("full_name") or user_metadata.get("name"),
     )

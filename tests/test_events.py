@@ -6,7 +6,7 @@ SAMPLE_EVENT = {
     "title": "Feeling a bit overwhelmed today",
     "description": "Logged after work",
     "occurred_at": "2026-07-04T10:30:00Z",
-    "tags": ["mood", "work"],
+    "tag_ids": ["mood", "work"],
 }
 
 
@@ -21,7 +21,7 @@ async def test_create_event(client: AsyncClient) -> None:
 
     assert body["title"] == SAMPLE_EVENT["title"]
     assert body["description"] == SAMPLE_EVENT["description"]
-    assert body["tags"] == SAMPLE_EVENT["tags"]
+    assert body["tag_ids"] == SAMPLE_EVENT["tag_ids"]
     assert body["id"]
     assert body["created_at"]
     assert body["updated_at"]
@@ -62,8 +62,8 @@ async def test_list_events_paginates_newest_first(client: AsyncClient) -> None:
 
 
 async def test_list_events_filters_by_tag(client: AsyncClient) -> None:
-    await _create_event(client, title="tagged", tags=["sleep"])
-    await _create_event(client, title="other", tags=["mood"])
+    await _create_event(client, title="tagged", tag_ids=["sleep"])
+    await _create_event(client, title="other", tag_ids=["mood"])
 
     response = await client.get(EVENTS_URL, params={"tag": "sleep"})
     assert response.status_code == 200
@@ -77,13 +77,13 @@ async def test_update_event_changes_only_provided_fields(client: AsyncClient) ->
     created = await _create_event(client)
 
     response = await client.patch(
-        f"{EVENTS_URL}/{created['id']}", json={"title": "Renamed", "tags": []}
+        f"{EVENTS_URL}/{created['id']}", json={"title": "Renamed", "tag_ids": []}
     )
     assert response.status_code == 200
     body = response.json()
 
     assert body["title"] == "Renamed"
-    assert body["tags"] == []
+    assert body["tag_ids"] == []
     assert body["description"] == created["description"]
     assert body["occurred_at"] == created["occurred_at"]
 

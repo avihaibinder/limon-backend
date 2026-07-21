@@ -63,8 +63,8 @@ async def test_valid_token_authenticates_and_provisions(
     assert response.status_code == 200, response.text
     body = response.json()
 
+    assert body["id"] == "8f1c2b34-0000-4000-8000-000000000000"  # id is the sub
     assert body["provider"] == "google"
-    assert body["provider_subject"] == "8f1c2b34-0000-4000-8000-000000000000"
     assert body["email"] == "lemon@example.com"
     assert body["display_name"] == "Lemon"
 
