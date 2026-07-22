@@ -1,10 +1,11 @@
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 
 from app.core.auth import CurrentUserDep
 from app.dependencies import SessionDep
 from app.models.user import User
 from app.schemas.user import UserRead, UserUpdate
 from app.services import users as users_service
+from app.services.supabase_admin import SupabaseAdminError
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -27,5 +28,14 @@ async def update_me(session: SessionDep, current_user: CurrentUserDep, payload: 
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_me(session: SessionDep, current_user: CurrentUserDep) -> None:
-    """Delete the authenticated user's account (tags cascade with it)."""
-    await users_service.delete_user(session, current_user)
+    """Delete the authenticated user's account: removes the Supabase auth identity
+    and our ``users`` row, which cascades away the user's events, recordings, and
+    tags. If the Supabase side fails, nothing local is removed and the call 502s so
+    the client can retry."""
+    try:
+        await users_service.delete_account(session, current_user)
+    except SupabaseAdminError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not delete the account upstream; please retry.",
+        ) from exc

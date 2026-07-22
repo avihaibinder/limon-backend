@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import step
 from app.models.event import Event
 from app.models.recording import Recording
 from app.schemas.event import EventCreate, EventUpdate
@@ -19,12 +20,6 @@ _AUDIO_CONTENT_TYPE = "audio/mp4"
 def _occurred_at(client_created_at_ms: int) -> datetime:
     """Map the client's epoch-ms capture time to a tz-aware UTC datetime."""
     return datetime.fromtimestamp(client_created_at_ms / 1000, tz=UTC)
-
-
-def _audio_storage_key(user_id: str, record_id: str) -> str:
-    """The GCS object key for an audio recording (parsed by the finalize handler
-    and read by the worker); the sub namespaces it, the recordId is the stem."""
-    return f"v0/{user_id}/{record_id}.m4a"
 
 
 async def create_event(
@@ -51,7 +46,7 @@ async def create_event(
 
     if payload.type == "audio":
         record_id = str(uuid.uuid4())
-        storage_key = _audio_storage_key(user_id, record_id)
+        storage_key = storage_service.audio_object_key(user_id, record_id)
         # Sign before persisting: if signing is misconfigured / fails we raise
         # without committing, so there is no event left dangling without a URL.
         signed_url = storage_service.presign_put(storage_key, _AUDIO_CONTENT_TYPE)
@@ -79,6 +74,8 @@ async def create_event(
         session.add(event)
         await session.commit()
         await session.refresh(event)
+        # Stepping stone 1: the audio event + pending recording exist, URL signed.
+        step("event_created", recordId=record_id, eventId=event.id, type="audio")
         return event, signed_url
 
     event = Event(
@@ -106,19 +103,22 @@ async def _mint_signed_url(session: AsyncSession, event: Event) -> str | None:
     return storage_service.presign_put(recording.storage_key, _AUDIO_CONTENT_TYPE)
 
 
-async def get_event(session: AsyncSession, event_id: str) -> Event | None:
-    return await session.get(Event, event_id)
+async def get_event(session: AsyncSession, event_id: str, *, user_id: str) -> Event | None:
+    """Fetch an event by id, scoped to its owner. A row that is not ``user_id``'s
+    returns ``None`` (the caller turns that into a 404, never revealing existence)."""
+    return await session.scalar(select(Event).where(Event.id == event_id, Event.user_id == user_id))
 
 
 async def list_events(
     session: AsyncSession,
     *,
+    user_id: str,
     limit: int,
     offset: int,
     tag: str | None = None,
 ) -> tuple[list[Event], int]:
-    """Return a page of events (newest first) and the total matching count."""
-    query = select(Event)
+    """Return a page of the caller's events (newest first) and the total count."""
+    query = select(Event).where(Event.user_id == user_id)
     if tag is not None:
         # tag_ids is a JSON array of tag id strings; unpack it with SQLite's json_each.
         query = query.where(

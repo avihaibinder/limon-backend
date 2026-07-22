@@ -52,6 +52,42 @@ class StorageNotConfiguredError(RuntimeError):
 
 
 # ---------------------------------------------------------------------------
+# Audio object-key layout — minted on create, parsed by the finalize handler.
+# ---------------------------------------------------------------------------
+
+_AUDIO_KEY_PREFIX = "v0"
+_AUDIO_KEY_SUFFIX = ".m4a"
+
+
+def audio_object_key(user_id: str, record_id: str) -> str:
+    """The GCS object key for an audio recording: ``v0/{userId}/{recordId}.m4a``.
+
+    Minted here when the events service creates an audio event and parsed back by
+    the GCS-finalize handler (``record_id_from_audio_key``), so the layout lives in
+    exactly one place and the two sides cannot drift apart.
+    """
+    return f"{_AUDIO_KEY_PREFIX}/{user_id}/{record_id}{_AUDIO_KEY_SUFFIX}"
+
+
+def record_id_from_audio_key(object_key: str) -> str | None:
+    """Recover ``recordId`` from an audio object key, or ``None`` if it is not one.
+
+    Inverse of :func:`audio_object_key`. Anything not shaped
+    ``v0/{userId}/{recordId}.m4a`` (a different prefix, a nested path, the wrong
+    suffix, an empty stem) returns ``None`` so the finalize handler can ignore
+    objects it does not own.
+    """
+    parts = object_key.split("/")
+    if len(parts) != 3 or parts[0] != _AUDIO_KEY_PREFIX:
+        return None
+    stem = parts[2]
+    if not stem.endswith(_AUDIO_KEY_SUFFIX):
+        return None
+    record_id = stem[: -len(_AUDIO_KEY_SUFFIX)]
+    return record_id or None
+
+
+# ---------------------------------------------------------------------------
 # Server-side byte I/O — the BlobStorage protocol and its GCS implementation.
 # ---------------------------------------------------------------------------
 

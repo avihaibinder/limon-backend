@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.event import Event
 from app.models.recording import Recording
+from app.models.user import User
 from app.services import storage as storage_service
 
 EVENTS_URL = "/api/v1/events"
@@ -210,3 +211,81 @@ async def test_delete_event(client: AsyncClient) -> None:
 
     response = await client.get(f"{EVENTS_URL}/{created['id']}")
     assert response.status_code == 404
+
+
+# --- Ownership scoping (domain 07) --------------------------------------------
+
+
+async def _seed_other_users_event(session_factory: async_sessionmaker[AsyncSession]) -> str:
+    """Insert a second user and a text event they own; return the event id. The
+    default `client` acts as TEST_IDENTITY, so this row belongs to someone else and
+    must be invisible to every read/write the caller makes."""
+    async with session_factory() as session:
+        session.add(User(id="other-user", provider="google"))
+        await session.flush()  # parent row before the FK child (no ORM relationship orders them)
+        event = Event(
+            id="other-users-event",
+            user_id="other-user",
+            type="text",
+            title="not yours",
+            tag_ids=[],
+            occurred_at=datetime.fromtimestamp(CLIENT_CREATED_AT_MS / 1000, tz=UTC),
+        )
+        session.add(event)
+        await session.commit()
+        return event.id
+
+
+async def test_create_stamps_the_caller_as_owner(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    me = (await client.get(ME_URL)).json()
+    event_id = (await _create(client))["event"]["id"]
+
+    async with session_factory() as session:
+        event = await session.get(Event, event_id)
+        assert event is not None
+        assert event.user_id == me["id"]
+
+
+async def test_get_another_users_event_returns_404(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    other_id = await _seed_other_users_event(session_factory)
+
+    response = await client.get(f"{EVENTS_URL}/{other_id}")
+    assert response.status_code == 404  # 404, not 403: never reveal it exists
+
+
+async def test_update_another_users_event_returns_404(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    other_id = await _seed_other_users_event(session_factory)
+
+    response = await client.patch(f"{EVENTS_URL}/{other_id}", json={"title": "hijacked"})
+    assert response.status_code == 404
+
+
+async def test_delete_another_users_event_returns_404(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    other_id = await _seed_other_users_event(session_factory)
+
+    response = await client.delete(f"{EVENTS_URL}/{other_id}")
+    assert response.status_code == 404
+
+    # And the row is untouched: still readable directly.
+    async with session_factory() as session:
+        assert await session.get(Event, other_id) is not None
+
+
+async def test_list_only_returns_the_callers_events(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    await _seed_other_users_event(session_factory)
+    mine = (await _create(client, title="mine"))["event"]
+
+    body = (await client.get(EVENTS_URL)).json()
+
+    assert body["total"] == 1
+    assert [item["id"] for item in body["items"]] == [mine["id"]]

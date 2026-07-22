@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import step
 from app.models.event import Event
 from app.models.recording import Recording
 from app.services import audio_storage, transcriber
@@ -40,8 +41,10 @@ class Outcome:
 async def run_transcription(session: AsyncSession, record_id: str) -> Outcome:
     recording = await session.get(Recording, record_id)
     if recording is None:
+        step("noop", recordId=record_id, reason="no_recording")
         return Outcome("noop")
     if recording.state == "done":
+        step("noop", recordId=record_id, reason="already_done")
         return Outcome("noop")
 
     # Atomic claim: pending|failed -> transcribing. If nothing was updated, another
@@ -53,21 +56,28 @@ async def run_transcription(session: AsyncSession, record_id: str) -> Outcome:
     )
     await session.commit()
     if claim.rowcount == 0:
+        step("noop", recordId=record_id, reason="claim_lost")
         return Outcome("noop")
+
+    # Stepping stone 5: this worker owns the recording and will transcribe it.
+    step("claimed", recordId=record_id)
 
     event = await session.scalar(select(Event).where(Event.recording_id == record_id))
     if event is None:
         # Data-integrity problem, not transient: fail permanently (no retry).
+        step("failed", recordId=record_id, reason="no_event")
         await _mark_failed(session, record_id, "No event linked to recording")
         return Outcome("failed")
 
     try:
         audio = await audio_storage.download(recording.storage_key)
     except audio_storage.AudioNotFoundError:
+        step("failed", recordId=record_id, reason="audio_not_found")
         await _mark_failed(session, record_id, "Audio object not found")
         return Outcome("failed")
     except audio_storage.AudioStorageNotConfiguredError:
         # Cannot read right now; retry rather than lose the record.
+        step("retry", recordId=record_id, reason="storage_not_configured")
         await _revert_pending(session, record_id)
         return Outcome("retry")
 
@@ -79,13 +89,16 @@ async def run_transcription(session: AsyncSession, record_id: str) -> Outcome:
         )
     except (AudioRejectedError, AudioTooLargeError) as exc:
         # Hard failure: the audio itself is the problem. Do not retry.
+        step("failed", recordId=record_id, reason=type(exc).__name__)
         await _mark_failed(session, record_id, type(exc).__name__)
         return Outcome("failed")
     except EndpointBusyError as exc:
+        step("retry", recordId=record_id, reason="endpoint_busy")
         await _revert_pending(session, record_id)
         return Outcome("retry", retry_after=exc.retry_after)
-    except (EndpointUnavailableError, TranscriberNotConfiguredError, TranscriberError):
+    except (EndpointUnavailableError, TranscriberNotConfiguredError, TranscriberError) as exc:
         # Endpoint down / not configured / unexpected: soft, retry within budget.
+        step("retry", recordId=record_id, reason=type(exc).__name__)
         await _revert_pending(session, record_id)
         return Outcome("retry")
 
@@ -95,6 +108,8 @@ async def run_transcription(session: AsyncSession, record_id: str) -> Outcome:
     recording.state = "done"
     recording.error = None
     await session.commit()
+    # Stepping stone 6: transcript written; the FE gets it over Realtime.
+    step("transcribed", recordId=record_id, chars=len(result.text))
     return Outcome("done")
 
 

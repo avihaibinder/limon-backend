@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
 from app.schemas.user import UserUpdate
+from app.services import supabase_admin
 
 
 async def get_user(session: AsyncSession, user_id: str) -> User | None:
@@ -42,6 +43,12 @@ async def update_user(session: AsyncSession, user: User, payload: UserUpdate) ->
     return user
 
 
-async def delete_user(session: AsyncSession, user: User) -> None:
+async def delete_account(session: AsyncSession, user: User) -> None:
+    """Delete the account across both stores. The Supabase ``auth.users`` identity
+    goes first: if that call fails we raise before touching local data, so a failed
+    delete leaves everything intact and retryable rather than half-removed. Deleting
+    our ``users`` row then cascades away the user's events, recordings, and tags.
+    """
+    await supabase_admin.delete_auth_user(user.id)
     await session.delete(user)
     await session.commit()
