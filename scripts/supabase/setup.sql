@@ -14,7 +14,9 @@
 begin;
 
 -- ---------------------------------------------------------------------------
--- Realtime: emit postgres_changes for `events` so the FE receives transcripts.
+-- Realtime: emit postgres_changes for `events` (transcripts, edits) and `tags`
+-- (live cross-device sync of tag create/rename/recolor/delete, see
+-- fe-be-comms/FE_CONTRACT.tags-realtime.md).
 -- ---------------------------------------------------------------------------
 
 -- RLS on Realtime gates each UPDATE by user_id, which is NOT the primary key.
@@ -25,9 +27,21 @@ begin;
 -- evaluated. Cost is larger WAL writes on `events`; acceptable for this workload.
 alter table public.events replica identity full;
 
--- Add `events` to Supabase's realtime publication (guarded: ADD errors if the
--- table is already a member, and we want a clean re-run).
+-- Same requirement for `tags`: without FULL, the owner-only policy cannot be
+-- evaluated on the UPDATE old-image and renames/recolors are silently dropped
+-- (verified live on `events`; see spec-local/plan/09-realtime-rls.md).
+-- Eyes-open trade-off: Realtime does NOT apply RLS to DELETE messages, and with
+-- FULL the DELETE old-record is the whole row, so every tags subscriber receives
+-- deleted tags' id/user_id/name/color table-wide across users. Accepted
+-- (FE_CONTRACT.tags-realtime.md Confirm 3); `events` already carries the same
+-- exposure for deleted rows.
+alter table public.tags replica identity full;
+
+-- Add both tables to Supabase's realtime publication (guarded: ADD errors if
+-- the table is already a member, and we want a clean re-run).
 do $$
+declare
+  t text;
 begin
   if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
     raise exception
@@ -35,14 +49,16 @@ begin
       'project (Database -> Replication) before running this script.';
   end if;
 
-  if not exists (
-    select 1 from pg_publication_tables
-    where pubname = 'supabase_realtime'
-      and schemaname = 'public'
-      and tablename = 'events'
-  ) then
-    alter publication supabase_realtime add table public.events;
-  end if;
+  foreach t in array array['events', 'tags'] loop
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = t
+    ) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -62,12 +78,22 @@ create policy "owner reads own events"
   on public.events for select
   using (auth.uid()::text = user_id);
 
+-- tags: same owner-only read gate, for the tags Realtime subscription
+-- (FE_CONTRACT.tags-realtime.md). This consciously supersedes the earlier
+-- deny-all stance (FE_DECISIONS.v5): the policy also admits direct PostgREST
+-- selects on `tags` by authenticated users; the FE keeps reading snapshots via
+-- GET /tags, but the surface now exists.
+alter table public.tags enable row level security;
+drop policy if exists "owner reads own tags" on public.tags;
+create policy "owner reads own tags"
+  on public.tags for select
+  using (auth.uid()::text = user_id);
+
 -- The FE never touches these tables directly (recordings is worker-internal;
--- tags/users go through the BE). Enable RLS with NO policy = deny-all for the
+-- users go through the BE). Enable RLS with NO policy = deny-all for the
 -- anon/authenticated roles, so a leaked anon key cannot read them via PostgREST
 -- or Realtime. The BE (postgres role) still has full access.
 alter table public.recordings enable row level security;
-alter table public.tags       enable row level security;
 alter table public.users      enable row level security;
 
 commit;

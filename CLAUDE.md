@@ -81,6 +81,20 @@ Legend: MVP = required for first release, P2 = later.
 - [ ] Deploy — target is Cloud Run (free tier), DB URL via Secret Manager
 - [x] CI — GitHub Actions runs lint (Ruff), format check, pytest (in-container), and a docker-compose smoke test on every push/PR
 - [ ] Testing: unit tests exist for events/tags/users; need FE test coverage too
+- [ ] Realtime DELETE privacy — P2. `events` and `tags` use `REPLICA IDENTITY
+  FULL` (required: Realtime checks the owner-only RLS policy for UPDATEs
+  against the WAL old-image, and under DEFAULT it lacks `user_id`, so updates
+  silently drop). Trade-off, accepted eyes-open with the FE
+  (`../fe-be-comms/FE_CONTRACT.tags-realtime.md` Confirm 3): Realtime applies
+  no RLS to DELETE broadcasts, so every subscriber receives deleted rows'
+  full old-record table-wide across users (tag names/colors, event
+  titles/bodies). Later: (a) test `REPLICA IDENTITY USING INDEX` on a unique
+  `(id, user_id)` index for `tags` — old image would carry just the two UUIDs,
+  enough for the UPDATE RLS check, but unverified against Supabase Realtime
+  and the index silently degrades identity to NOTHING if ever dropped; won't
+  help `events`, whose FE consumes old-record data on UPDATEs; or (b) the real
+  fix, migrate the whole Realtime setup to broadcast authorization (per-user
+  private channels)
 - [ ] Security review
 - [ ] "Adi/matn" oracle machine — context TBD, ask user before assuming scope
 
@@ -135,6 +149,13 @@ machine — CI's `lint` job is what actually enforces this for everyone.
   `users.demo_seeded_at`; a repeat call or a non-empty account 409s. FE
   contract: `spec-local/FE_DEMO_SEED.md`. Live DBs created before this column
   need `ALTER TABLE users ADD COLUMN demo_seeded_at TIMESTAMP WITH TIME ZONE;`.
+- Tag API (contract: `../fe-be-comms/FE_CONTRACT.tags-crud.md`): names are trimmed,
+  `POST /tags` is upsert-by-name (`201` new / `200` existing, existing color never
+  overwritten), tags carry a nullable opaque `color` (up to 32 chars), and
+  `DELETE /tags/{id}` detaches the id from all the owner's events in the same
+  transaction (each touched event gets a fresh `updated_at`, so Realtime echoes
+  it). Live DBs created before the color column need
+  `ALTER TABLE tags ADD COLUMN color VARCHAR(32);`.
 - CORS defaults to `["*"]` for development — restrict `LIMON_CORS_ORIGINS`
   before deploying.
 - `greenlet` is declared as a direct dependency (not left as SQLAlchemy's
