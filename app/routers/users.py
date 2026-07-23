@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, HTTPException, status
 
 from app.core.auth import CurrentUserDep
@@ -8,6 +10,8 @@ from app.services import demo_seed as demo_seed_service
 from app.services import events as events_service
 from app.services import users as users_service
 from app.services.supabase_admin import SupabaseAdminError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -57,6 +61,9 @@ async def delete_me(session: SessionDep, current_user: CurrentUserDep) -> None:
     try:
         await users_service.delete_account(session, current_user)
     except SupabaseAdminError as exc:
+        # Log the cause server-side (it never reaches the client): without this a
+        # misconfigured key and a Supabase outage are indistinguishable in the logs.
+        logger.error("Delete-account aborted before local deletion: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Could not delete the account upstream; please retry.",
