@@ -1,49 +1,34 @@
 """Service layer for users."""
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
 from app.schemas.user import UserUpdate
+from app.services import supabase_admin
 
 
 async def get_user(session: AsyncSession, user_id: str) -> User | None:
     return await session.get(User, user_id)
 
 
-async def get_user_by_provider_subject(
-    session: AsyncSession, provider: str, provider_subject: str
-) -> User | None:
-    """Look up a user by OAuth identity."""
-    return await session.scalar(
-        select(User).where(
-            User.provider == provider,
-            User.provider_subject == provider_subject,
-        )
-    )
-
-
 async def get_or_create_user(
     session: AsyncSession,
     *,
-    provider: str,
-    provider_subject: str,
+    sub: str,
+    provider: str = "supabase",
     email: str | None = None,
     display_name: str | None = None,
 ) -> User:
-    """JIT provisioning: return the user for this OAuth identity, creating it
-    on first sight. Profile fields are only seeded at creation — later token
-    metadata never overwrites edits the user made through PATCH /users/me.
+    """JIT provisioning: return the user for this Supabase identity, creating it
+    on first sight. ``sub`` (the Supabase user id) *is* our primary key, so a
+    lookup is a plain PK fetch and there is exactly one account per identity.
+    Profile fields are only seeded at creation — later token metadata never
+    overwrites edits the user made through PATCH /users/me.
     """
-    user = await get_user_by_provider_subject(session, provider, provider_subject)
+    user = await session.get(User, sub)
     if user is not None:
         return user
-    user = User(
-        provider=provider,
-        provider_subject=provider_subject,
-        email=email,
-        display_name=display_name,
-    )
+    user = User(id=sub, provider=provider, email=email, display_name=display_name)
     session.add(user)
     await session.commit()
     await session.refresh(user)
@@ -58,6 +43,12 @@ async def update_user(session: AsyncSession, user: User, payload: UserUpdate) ->
     return user
 
 
-async def delete_user(session: AsyncSession, user: User) -> None:
+async def delete_account(session: AsyncSession, user: User) -> None:
+    """Delete the account across both stores. The Supabase ``auth.users`` identity
+    goes first: if that call fails we raise before touching local data, so a failed
+    delete leaves everything intact and retryable rather than half-removed. Deleting
+    our ``users`` row then cascades away the user's events, recordings, and tags.
+    """
+    await supabase_admin.delete_auth_user(user.id)
     await session.delete(user)
     await session.commit()

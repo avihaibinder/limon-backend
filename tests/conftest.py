@@ -13,10 +13,11 @@ from app.main import app
 from app.models.user import User
 from app.services import users as users_service
 
-# The OAuth identity every authenticated test request acts as.
+# The Supabase identity every authenticated test request acts as. `sub` is the
+# user id (decision 15), so it is also the users.id row provisioned for tests.
 TEST_IDENTITY = {
+    "sub": "test-subject",
     "provider": "google",
-    "provider_subject": "test-subject",
     "email": "lemon@example.com",
     "display_name": "Lemon",
 }

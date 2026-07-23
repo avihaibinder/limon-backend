@@ -39,12 +39,54 @@ class Settings(BaseSettings):
     # Only for legacy Supabase projects still signing with the shared HS256
     # secret; projects on asymmetric signing keys don't need it.
     supabase_jwt_secret: str | None = None
+    # Supabase service-role key, used only server-side to call the Auth Admin API
+    # (delete-account removes the auth.users identity, which our public.* cascade
+    # cannot reach). A secret; never sent to clients. When supabase_url is unset
+    # (local dev/tests, no real Supabase) the admin call is skipped, so this is
+    # only required in an environment that actually has Supabase auth.
+    supabase_service_role_key: str | None = None
+
+    # Nebius transcription endpoint (raised on demand; see
+    # spec-local/BACKEND_INTEGRATION.md). URL and token change on every
+    # (re)create, so they are deployment config / secrets, not constants. Unset
+    # means the worker treats transcription as unavailable rather than crashing.
+    transcriber_endpoint_url: str | None = None
+    transcriber_endpoint_token: str | None = None
+    # Client timeout (seconds) for one transcription call. Sized from the L40S
+    # rtf (~0.09 * audio_seconds): a 5-minute clip is about 30s of processing,
+    # so 90s leaves headroom for a warming endpoint.
+    transcriber_timeout_s: float = 90.0
+
+    # Local filesystem directory the worker reads audio from in dev/testing
+    # instead of GCS. When set, audio_storage.download reads `{dir}/{storage_key}`.
+    # Unset in prod, where downloads go to GCS (bucket from `gcs_bucket` below).
+    local_audio_dir: str | None = None
+    # Interim shared-secret guard for the internal worker endpoints until Cloud
+    # Tasks / Pub/Sub OIDC verification is wired (deploy). Unset means the guard is
+    # open (local dev only).
+    internal_task_token: str | None = None
+
+    # Cloud Tasks: the GCS-finalize handler (POST /internal/uploaded) enqueues one
+    # task per uploaded audio object, targeting POST /internal/transcribe, so the
+    # worker runs with a capped retry budget rather than a raw Pub/Sub push. All
+    # deploy config, not code (Secret Manager / --set-env-vars); unset in dev/tests,
+    # where the enqueue seam is mocked and the dev shim replaces the trigger. See
+    # spec-local/plan/04-trigger.md.
+    tasks_project: str | None = None
+    tasks_location: str | None = None
+    tasks_queue: str | None = None
+    # Base URL of the worker service the task calls (e.g. the Cloud Run URL); the
+    # task targets {tasks_worker_url}/internal/transcribe.
+    tasks_worker_url: str | None = None
+    # Service account the task authenticates as (OIDC) when calling the worker, so
+    # the worker can verify the caller. Unset means no OIDC token on the task.
+    tasks_oidc_service_account: str | None = None
 
     # Google Cloud Storage bucket for blob storage — server-side byte I/O
     # (BlobStorage) and the target for client-direct upload presign URLs. Unset
-    # means the uploads endpoint 503s and get_blob_storage() raises. Nothing
-    # account-specific lives in code, so pointing this (and the signer SA below)
-    # at a different GCP account is the only change needed to move environments.
+    # means POST /events for an audio event 503s and get_blob_storage() raises.
+    # Nothing account-specific lives in code, so pointing this (and the signer SA
+    # below) at a different GCP account is the only change needed to move envs.
     gcs_bucket: str | None = None
     # Service account whose identity signs the V4 upload URLs. Signing needs a
     # service-account identity; with ADC we call the IAM signBlob API as this

@@ -19,9 +19,9 @@ async def _seed_other_users_tag(
 ) -> Tag:
     """Insert a tag owned by somebody other than the authenticated test user."""
     async with session_factory() as session:
-        other = User(provider="google", provider_subject="other-subject")
+        other = User(id="other-subject", provider="google")
         session.add(other)
-        await session.flush()  # materialize other.id (Python-side default)
+        await session.flush()
         tag = Tag(user_id=other.id, name=name)
         session.add(tag)
         await session.commit()

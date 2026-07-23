@@ -1,38 +1,89 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
+
+# The wire contract is camelCase (CONTRACT.v2 "Fields, timestamps, and casing").
+# populate_by_name lets the API also accept the snake_case field names, and lets
+# EventRead read snake_case attributes straight off the ORM row.
+_camel = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+EventType = Literal["text", "audio"]
 
 
-class EventBase(BaseModel):
-    """Fields shared by create and read representations."""
+class EventCreate(BaseModel):
+    """Payload for ``POST /events``.
 
-    title: str = Field(min_length=1, max_length=200, examples=["Feeling a bit overwhelmed today"])
+    ``type`` is ``text | audio`` (the former ``lemon`` is a ``text`` event with a
+    null title/body). ``title`` and ``description`` are optional for every type;
+    audio events leave ``description`` null and get the transcript later. Time in
+    is ``clientCreatedAt`` (epoch-ms), stored as the event's ``occurred_at``.
+    """
+
+    model_config = _camel
+
+    type: EventType = "text"
+    title: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
-    occurred_at: datetime = Field(description="When the event happened.")
-    tags: list[str] = Field(default_factory=list, examples=[["mood", "sleep"]])
-
-
-class EventCreate(EventBase):
-    """Payload for creating an event."""
+    tag_ids: list[str] = Field(
+        default_factory=list,
+        description="tags.id strings this event carries.",
+        examples=[["3f2504e0-4f89-41d3-9a0c-0305e82c3301"]],
+    )
+    client_created_at: int = Field(
+        description="When the event happened, epoch milliseconds. Stored as occurred_at.",
+        examples=[1737000000000],
+    )
+    client_event_id: str | None = Field(
+        default=None,
+        max_length=36,
+        description="Client-generated idempotency key; a retry with the same value "
+        "returns the same event (and a fresh signedUrl) instead of a duplicate.",
+    )
 
 
 class EventUpdate(BaseModel):
     """Partial update payload; only provided fields are changed."""
 
-    title: str | None = Field(default=None, min_length=1, max_length=200)
+    model_config = _camel
+
+    title: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
     occurred_at: datetime | None = None
-    tags: list[str] | None = None
+    tag_ids: list[str] | None = None
 
 
-class EventRead(EventBase):
-    """Event as returned by the API."""
+class EventRead(BaseModel):
+    """The event object as the FE reads it (create response, GET, list)."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, from_attributes=True)
 
     id: str
+    type: EventType
+    title: str | None
+    description: str | None
+    tag_ids: list[str]
+    # Serialized as recordId (not the generator's recordingId); read off the ORM
+    # attribute recording_id. Present only for audio events.
+    record_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("recording_id", "recordId"),
+        serialization_alias="recordId",
+    )
+    occurred_at: datetime
     created_at: datetime
     updated_at: datetime
+
+
+class EventCreateResponse(BaseModel):
+    """``POST /events`` envelope. recordId/signedUrl are set for audio only."""
+
+    model_config = _camel
+
+    event: EventRead
+    record_id: str | None = None
+    signed_url: str | None = None
 
 
 class EventList(BaseModel):

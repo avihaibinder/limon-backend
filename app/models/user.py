@@ -1,7 +1,6 @@
-import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, String, UniqueConstraint
+from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -11,27 +10,24 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _new_id() -> str:
-    return str(uuid.uuid4())
-
-
 class User(Base):
-    """A LimON account. Authentication happens at the OAuth provider; this row
-    is our own stable identity that events and settings can reference.
+    """A LimON account. Identity is the Supabase user id: ``id`` is the JWT
+    ``sub`` (Supabase's own user uuid, never Google's), so we mint no ids of our
+    own and there is exactly one account per Supabase identity. Events,
+    recordings, and tags reference this row by ``user_id`` FK.
     """
 
     __tablename__ = "users"
-    __table_args__ = (
-        # One row per identity at a given provider; allows linking a second
-        # provider to the same person as a separate row later if needed.
-        UniqueConstraint("provider", "provider_subject", name="uq_users_provider_subject"),
-    )
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    # OAuth provider that Supabase authenticated (kept for display only).
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
-    provider_subject: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # When the user backfilled demo data via POST /users/me/demo-data; null =
+    # never. The FE reads it to decide whether to offer the demo-data button,
+    # and the endpoint 409s when it is already set.
+    demo_seeded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )

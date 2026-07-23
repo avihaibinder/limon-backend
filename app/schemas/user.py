@@ -17,13 +17,17 @@ class UserRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
-    provider: str = Field(examples=["google"])
-    provider_subject: str = Field(
-        description="The `sub` claim from the Supabase token.",
+    id: str = Field(
+        description="The Supabase user id (`sub` claim); our own primary key too.",
         examples=["8f1c2b34-0000-4000-8000-000000000000"],
     )
+    provider: str = Field(examples=["google"])
     email: EmailStr | None = None
     display_name: str | None = Field(default=None, max_length=200)
+    demo_seeded_at: datetime | None = Field(
+        default=None,
+        description="When demo data was created via POST /users/me/demo-data; "
+        "null means never (the FE uses this to decide whether to offer the button).",
+    )
     created_at: datetime
     updated_at: datetime

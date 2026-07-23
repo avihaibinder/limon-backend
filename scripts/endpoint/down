@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+#
+# Tear down the LimON Hebrew-transcription endpoint on Nebius.
+#
+# DELETE, not stop: a deleted endpoint is true zero cost, and the URL + token
+# change on every recreate anyway, so there is nothing worth preserving by
+# stopping. Safe to run twice (a missing endpoint is treated as success).
+#
+# This is a convenience wrapper: you can equally delete the endpoint from the
+# Nebius web console. There is no automated dead-man switch, so tearing down is
+# on you -- an idle L40S is the only expensive failure mode here.
+#
+# It removes the endpoint recorded by scripts/endpoint/up (the local state file),
+# or an id you pass explicitly.
+#
+# Usage:
+#   scripts/endpoint/down              # delete the endpoint from the state file
+#   scripts/endpoint/down --id <id>    # delete a specific endpoint id
+#   NEBIUS_ENDPOINT_ID=<id> scripts/endpoint/down
+#
+# Prereqs: nebius CLI installed and authenticated; jq.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STATE_FILE="$SCRIPT_DIR/.state.json"
+
+log()  { echo "[down] $*"; }
+die()  { echo "[down] error: $*" >&2; exit 1; }
+
+id="${NEBIUS_ENDPOINT_ID:-}"
+case "${1:-}" in
+  -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  --id) id="${2:-}"; [[ -n "$id" ]] || die "--id needs a value"; shift 2 ;;
+  "") : ;;
+  *) die "unexpected argument: $1 (see --help)" ;;
+esac
+
+command -v nebius >/dev/null 2>&1 || die "nebius CLI not found."
+command -v jq     >/dev/null 2>&1 || die "jq not found."
+
+# Fall back to the id recorded by `up`.
+if [[ -z "$id" && -f "$STATE_FILE" ]]; then
+  id="$(jq -r '.id // empty' "$STATE_FILE" 2>/dev/null || true)"
+fi
+
+if [[ -z "$id" ]]; then
+  log "no endpoint id found (no --id, no NEBIUS_ENDPOINT_ID, no state file)."
+  log "nothing to delete. If one is up, delete it from the Nebius console."
+  exit 0
+fi
+
+# Already gone? Then we are done -- and clean up the stale state file.
+if ! nebius ai endpoint get --id "$id" >/dev/null 2>&1; then
+  log "endpoint $id does not exist (already deleted). nothing to do."
+  rm -f "$STATE_FILE"
+  exit 0
+fi
+
+log "deleting endpoint $id (waits for teardown to complete)..."
+nebius ai endpoint delete --id "$id"
+rm -f "$STATE_FILE"
+log "deleted. billing for this L40S has stopped."
+log "double-check nothing is left running: nebius ai endpoint list  (or the Nebius console)"

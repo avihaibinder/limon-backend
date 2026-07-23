@@ -12,6 +12,13 @@ venv/
 # Environment
 .env
 
+# Nebius endpoint local state (holds the data-plane token; written by scripts/endpoint/up)
+scripts/endpoint/.state.json
+scripts/endpoint/.create.json
+
+# local dev files
+spec-local/
+
 # Database
 *.db
 *.sqlite3
