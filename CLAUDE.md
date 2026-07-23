@@ -81,6 +81,20 @@ Legend: MVP = required for first release, P2 = later.
 - [ ] Deploy — target is Cloud Run (free tier), DB URL via Secret Manager
 - [x] CI — GitHub Actions runs lint (Ruff), format check, pytest (in-container), and a docker-compose smoke test on every push/PR
 - [ ] Testing: unit tests exist for events/tags/users; need FE test coverage too
+- [ ] Realtime DELETE privacy — P2. `events` and `tags` use `REPLICA IDENTITY
+  FULL` (required: Realtime checks the owner-only RLS policy for UPDATEs
+  against the WAL old-image, and under DEFAULT it lacks `user_id`, so updates
+  silently drop). Trade-off, accepted eyes-open with the FE
+  (`../fe-be-comms/FE_CONTRACT.tags-realtime.md` Confirm 3): Realtime applies
+  no RLS to DELETE broadcasts, so every subscriber receives deleted rows'
+  full old-record table-wide across users (tag names/colors, event
+  titles/bodies). Later: (a) test `REPLICA IDENTITY USING INDEX` on a unique
+  `(id, user_id)` index for `tags` — old image would carry just the two UUIDs,
+  enough for the UPDATE RLS check, but unverified against Supabase Realtime
+  and the index silently degrades identity to NOTHING if ever dropped; won't
+  help `events`, whose FE consumes old-record data on UPDATEs; or (b) the real
+  fix, migrate the whole Realtime setup to broadcast authorization (per-user
+  private channels)
 - [ ] Security review
 - [ ] "Adi/matn" oracle machine — context TBD, ask user before assuming scope
 
