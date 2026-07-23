@@ -128,6 +128,13 @@ machine — CI's `lint` job is what actually enforces this for everyone.
 
 - Tables are created automatically on startup; move to Alembic migrations
   before this needs real schema evolution in production.
+- Demo seeding: `POST /api/v1/users/me/demo-data` backfills the caller's empty
+  account with 6 demo tags + 10 text events (`app/services/demo_seed.py`,
+  sourced from `spec-local/mock_data/DEMO_SEED.mock-data.md`), timestamps
+  shifted so the newest row is "now". One-shot per account: success stamps
+  `users.demo_seeded_at`; a repeat call or a non-empty account 409s. FE
+  contract: `spec-local/FE_DEMO_SEED.md`. Live DBs created before this column
+  need `ALTER TABLE users ADD COLUMN demo_seeded_at TIMESTAMP WITH TIME ZONE;`.
 - CORS defaults to `["*"]` for development — restrict `LIMON_CORS_ORIGINS`
   before deploying.
 - `greenlet` is declared as a direct dependency (not left as SQLAlchemy's

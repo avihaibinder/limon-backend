@@ -103,6 +103,12 @@ async def _mint_signed_url(session: AsyncSession, event: Event) -> str | None:
     return storage_service.presign_put(recording.storage_key, _AUDIO_CONTENT_TYPE)
 
 
+async def has_events(session: AsyncSession, *, user_id: str) -> bool:
+    """True if the user owns at least one event (guards the demo-data backfill)."""
+    first = await session.scalar(select(Event.id).where(Event.user_id == user_id).limit(1))
+    return first is not None
+
+
 async def get_event(session: AsyncSession, event_id: str, *, user_id: str) -> Event | None:
     """Fetch an event by id, scoped to its owner. A row that is not ``user_id``'s
     returns ``None`` (the caller turns that into a 404, never revealing existence)."""

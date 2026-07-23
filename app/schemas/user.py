@@ -24,5 +24,10 @@ class UserRead(BaseModel):
     provider: str = Field(examples=["google"])
     email: EmailStr | None = None
     display_name: str | None = Field(default=None, max_length=200)
+    demo_seeded_at: datetime | None = Field(
+        default=None,
+        description="When demo data was created via POST /users/me/demo-data; "
+        "null means never (the FE uses this to decide whether to offer the button).",
+    )
     created_at: datetime
     updated_at: datetime
