@@ -135,6 +135,13 @@ machine — CI's `lint` job is what actually enforces this for everyone.
   `users.demo_seeded_at`; a repeat call or a non-empty account 409s. FE
   contract: `spec-local/FE_DEMO_SEED.md`. Live DBs created before this column
   need `ALTER TABLE users ADD COLUMN demo_seeded_at TIMESTAMP WITH TIME ZONE;`.
+- Tag API (contract: `../fe-be-comms/FE_CONTRACT.tags-crud.md`): names are trimmed,
+  `POST /tags` is upsert-by-name (`201` new / `200` existing, existing color never
+  overwritten), tags carry a nullable opaque `color` (up to 32 chars), and
+  `DELETE /tags/{id}` detaches the id from all the owner's events in the same
+  transaction (each touched event gets a fresh `updated_at`, so Realtime echoes
+  it). Live DBs created before the color column need
+  `ALTER TABLE tags ADD COLUMN color VARCHAR(32);`.
 - CORS defaults to `["*"]` for development — restrict `LIMON_CORS_ORIGINS`
   before deploying.
 - `greenlet` is declared as a direct dependency (not left as SQLAlchemy's

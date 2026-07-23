@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from app.core.auth import CurrentUserDep
 from app.dependencies import SessionDep
@@ -32,10 +32,21 @@ async def _ensure_name_free(session: SessionDep, user_id: str, name: str) -> Non
 
 
 @router.post("", response_model=TagRead, status_code=status.HTTP_201_CREATED)
-async def create_tag(session: SessionDep, current_user: CurrentUserDep, payload: TagCreate) -> Tag:
-    """Create a tag for the authenticated user."""
-    await _ensure_name_free(session, current_user.id, payload.name)
-    return await tags_service.create_tag(session, user_id=current_user.id, name=payload.name)
+async def create_tag(
+    session: SessionDep, current_user: CurrentUserDep, payload: TagCreate, response: Response
+) -> Tag:
+    """Create a tag for the authenticated user (upsert-by-name).
+
+    If the caller already has a tag with the same trimmed name, return it with
+    200 instead of creating (its color is not overwritten), so retries and
+    FE-side dedupe need no idempotency key.
+    """
+    tag, created = await tags_service.upsert_tag_by_name(
+        session, user_id=current_user.id, name=payload.name, color=payload.color
+    )
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return tag
 
 
 @router.get("", response_model=TagList)
@@ -76,6 +87,6 @@ async def update_tag(
 
 @router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tag(session: SessionDep, current_user: CurrentUserDep, tag_id: str) -> None:
-    """Delete one of the authenticated user's tags."""
+    """Delete one of the authenticated user's tags, detaching it from their events."""
     tag = await _get_own_tag_or_404(session, current_user.id, tag_id)
     await tags_service.delete_tag(session, tag)

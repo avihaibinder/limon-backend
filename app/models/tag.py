@@ -19,3 +19,6 @@ class Tag(Base):
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Opaque display color chosen by the client (e.g. "#f9d9a0"); never
+    # interpreted server-side. Null = client assigns a local default.
+    color: Mapped[str | None] = mapped_column(String(32), nullable=True)
