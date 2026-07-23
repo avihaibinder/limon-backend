@@ -44,7 +44,7 @@ async def test_demo_data_creates_all_events_and_tags(client: AsyncClient) -> Non
     assert all(e["type"] == "text" and e["recordId"] is None for e in events["items"])
 
     tags = (await client.get(TAGS_URL)).json()
-    assert {t["name"] for t in tags["items"]} == set(demo_seed._TAG_NAMES.values())
+    assert {(t["name"], t["color"]) for t in tags["items"]} == set(demo_seed._TAGS.values())
     assert tags["total"] == 6
 
 
@@ -105,6 +105,8 @@ async def test_existing_tag_with_seed_name_is_reused(client: AsyncClient) -> Non
 
     tags = (await client.get(TAGS_URL)).json()
     assert tags["total"] == 6  # reused, not duplicated
+    reused = next(t for t in tags["items"] if t["id"] == existing_tag_id)
+    assert reused["color"] is None  # the user's own tag keeps its color, no legend overwrite
 
     items = (await client.get(EVENTS_URL)).json()["items"]
     motorcycle = next(e for e in items if e["title"] == "רעש של אופנוע מהרחוב")

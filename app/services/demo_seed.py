@@ -16,8 +16,8 @@ Mapping from the old FE shape (the open points called out in the mock file):
   API applies (see ``EventCreate``). Lemon intensity is not kept.
 - The ``audio`` row never had a real recording (it was a placeholder), so it
   is seeded as a plain text event, keeping its title.
-- Legacy local tag ids (t1..t6) become real per-user ``tags`` rows; the
-  legend's colors are dropped (tags carry no color on the BE).
+- Legacy local tag ids (t1..t6) become real per-user ``tags`` rows, carrying
+  the legend's colors (a pre-existing same-name tag keeps its own color).
 - ``exported_record_ids`` is dropped (no export flag on the BE).
 """
 
@@ -30,15 +30,16 @@ from app.models.tag import Tag
 from app.models.user import User
 from app.services import tags as tags_service
 
-# Local tag id to tag name, in the FE's defaultTags order. All six are created
-# even though the seed events reference only five (t2 is part of the default set).
-_TAG_NAMES: dict[str, str] = {
-    "t1": "משפחה",
-    "t2": "עבודה",
-    "t3": "חלום רע",
-    "t4": "ריב",
-    "t5": "רעש",
-    "t6": "תחושה רעה",
+# Local tag id to (name, color), in the FE's defaultTags order, colors from the
+# mock file's tag legend. All six are created even though the seed events
+# reference only five (t2 is part of the default set).
+_TAGS: dict[str, tuple[str, str]] = {
+    "t1": ("משפחה", "#fcddca"),
+    "t2": ("עבודה", "#ede3fc"),
+    "t3": ("חלום רע", "#d6fcfc"),
+    "t4": ("ריב", "#fcd7dd"),
+    "t5": ("רעש", "#e5e4cf"),
+    "t6": ("תחושה רעה", "#dcebdd"),
 }
 
 # One row per seed event: (original epoch-ms timestamp, title, local tag ids).
@@ -76,10 +77,10 @@ async def seed_demo_data(session: AsyncSession, *, user: User) -> User:
     once, so the events and the mark land atomically.
     """
     tags: dict[str, Tag] = {}
-    for local_id, name in _TAG_NAMES.items():
+    for local_id, (name, color) in _TAGS.items():
         tag = await tags_service.get_tag_by_name(session, user.id, name)
         if tag is None:
-            tag = Tag(user_id=user.id, name=name)
+            tag = Tag(user_id=user.id, name=name, color=color)
             session.add(tag)
         tags[local_id] = tag
     # Flush so newly created tags get their generated ids before events reference them.
