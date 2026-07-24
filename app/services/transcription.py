@@ -17,7 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import step
 from app.models.event import Event
 from app.models.recording import Recording
-from app.services import audio_storage, transcriber
+from app.services import audio_storage, task_queue, transcriber
+from app.services.task_queue import TaskQueueError
 from app.services.transcriber import (
     AudioRejectedError,
     AudioTooLargeError,
@@ -110,6 +111,16 @@ async def run_transcription(session: AsyncSession, record_id: str) -> Outcome:
     await session.commit()
     # Stepping stone 6: transcript written; the FE gets it over Realtime.
     step("transcribed", recordId=record_id, chars=len(result.text))
+
+    if not event.tag_ids:
+        # Best-effort: an enqueue failure here must not turn a successful
+        # transcription into a "retry" outcome (that would re-run transcription
+        # over an unrelated tagging problem).
+        try:
+            await task_queue.enqueue_tagging(event.id)
+        except TaskQueueError as exc:
+            step("tagging_enqueue_failed", recordId=record_id, reason=type(exc).__name__)
+
     return Outcome("done")
 
 
