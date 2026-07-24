@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -40,6 +40,10 @@ class Event(Base):
     recording_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("recordings.id"), nullable=True, unique=True
     )
+    # Recording length in whole seconds (audio only); mirrors recordings.duration_sec.
+    # Denormalized onto the event so the FE's direct-Supabase snapshot/Realtime read
+    # (which sees only public.events columns) can surface it. Null for text events.
+    duration_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Client-generated idempotency key for POST /events; UUID4 is globally unique.
     client_event_id: Mapped[str | None] = mapped_column(String(36), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(

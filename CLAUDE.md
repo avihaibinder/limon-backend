@@ -156,6 +156,16 @@ machine — CI's `lint` job is what actually enforces this for everyone.
   transaction (each touched event gets a fresh `updated_at`, so Realtime echoes
   it). Live DBs created before the color column need
   `ALTER TABLE tags ADD COLUMN color VARCHAR(32);`.
+- Audio duration (contract: `../fe-be-comms/FE_CONTRACT.audio-duration.md`): audio
+  create bodies may carry an optional `durationSec` (whole seconds, integer `>= 0`;
+  negative/non-integer 422s, absence/null = unknown length, text events never send
+  it). Stored on `recordings.duration_sec` (audio metadata) and mirrored flat onto
+  `events.duration_sec` so the FE's raw Supabase snapshot/Realtime read surfaces it
+  (the FE never reads the recordings table). Set once at create; the idempotent
+  `client_event_id` retry never rewrites it. Echoed as `durationSec` on `EventRead`.
+  Live DBs need both:
+  `ALTER TABLE recordings ADD COLUMN duration_sec INTEGER;` and
+  `ALTER TABLE events ADD COLUMN duration_sec INTEGER;`.
 - CORS defaults to `["*"]` for development — restrict `LIMON_CORS_ORIGINS`
   before deploying.
 - `greenlet` is declared as a direct dependency (not left as SQLAlchemy's
