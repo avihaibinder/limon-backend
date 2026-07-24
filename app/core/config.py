@@ -97,6 +97,14 @@ class Settings(BaseSettings):
     # How long a presigned upload URL stays valid, in seconds (default 15 min).
     gcs_signed_url_ttl_seconds: int = 900
 
+    # Nebius Token Factory auto-tagging endpoint (OpenAI-compatible chat
+    # completions). Unset api_key means the worker treats tagging as
+    # unavailable rather than crashing, same convention as transcriber_*.
+    tagger_api_key: str | None = None
+    tagger_model: str = "Qwen/Qwen3-32B"
+    tagger_base_url: str = "https://api.tokenfactory.nebius.com/v1/"
+    tagger_timeout_s: float = 60.0
+
 
 @lru_cache
 def get_settings() -> Settings:
