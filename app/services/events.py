@@ -11,6 +11,8 @@ from app.models.event import Event
 from app.models.recording import Recording
 from app.schemas.event import EventCreate, EventUpdate
 from app.services import storage as storage_service
+from app.services import task_queue
+from app.services.task_queue import TaskQueueError
 
 # Content type the audio upload URL is signed for (m4a); the client must PUT with
 # a matching Content-Type or GCS rejects the signature.
@@ -20,6 +22,22 @@ _AUDIO_CONTENT_TYPE = "audio/mp4"
 def _occurred_at(client_created_at_ms: int) -> datetime:
     """Map the client's epoch-ms capture time to a tz-aware UTC datetime."""
     return datetime.fromtimestamp(client_created_at_ms / 1000, tz=UTC)
+
+
+async def _maybe_enqueue_tagging(event: Event) -> None:
+    """Enqueue auto-tagging if ``event`` has text and no user-selected tags.
+
+    Best-effort: this runs inline in a user-facing request (unlike the GCS
+    finalize -> Cloud Task chain), so an enqueue failure -- including Cloud
+    Tasks being unconfigured, the normal case in local dev -- must not fail
+    the caller's create/update. Logged and swallowed instead.
+    """
+    if event.tag_ids or not (event.title or event.description):
+        return
+    try:
+        await task_queue.enqueue_tagging(event.id)
+    except TaskQueueError as exc:
+        step("tagging_enqueue_failed", eventId=event.id, reason=type(exc).__name__)
 
 
 async def create_event(
@@ -95,6 +113,7 @@ async def create_event(
     session.add(event)
     await session.commit()
     await session.refresh(event)
+    await _maybe_enqueue_tagging(event)
     return event, None
 
 
@@ -144,10 +163,15 @@ async def list_events(
 
 
 async def update_event(session: AsyncSession, event: Event, payload: EventUpdate) -> Event:
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updated_fields = payload.model_dump(exclude_unset=True)
+    for field, value in updated_fields.items():
         setattr(event, field, value)
     await session.commit()
     await session.refresh(event)
+
+    if "title" in updated_fields or "description" in updated_fields:
+        await _maybe_enqueue_tagging(event)
+
     return event
 
 

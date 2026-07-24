@@ -19,8 +19,9 @@ from app.core.config import get_settings
 from app.core.logging import step
 from app.dependencies import SessionDep
 from app.schemas.pubsub import PubSubEnvelope, PubSubMessage
+from app.schemas.tagging import TagTask
 from app.schemas.transcription import TranscribeTask
-from app.services import task_queue, transcription
+from app.services import tagging, task_queue, transcription
 from app.services.storage import record_id_from_audio_key
 
 router = APIRouter(prefix="/internal", tags=["internal"])
@@ -51,6 +52,21 @@ async def transcribe(
     _auth: Annotated[None, Depends(require_internal_auth)],
 ) -> JSONResponse:
     outcome = await transcription.run_transcription(session, payload.record_id)
+    if outcome.status == "retry":
+        headers = {}
+        if outcome.retry_after is not None:
+            headers["Retry-After"] = str(int(outcome.retry_after))
+        return JSONResponse({"status": "retry"}, status_code=503, headers=headers)
+    return JSONResponse({"status": outcome.status}, status_code=200)
+
+
+@router.post("/tag")
+async def tag(
+    session: SessionDep,
+    payload: TagTask,
+    _auth: Annotated[None, Depends(require_internal_auth)],
+) -> JSONResponse:
+    outcome = await tagging.run_tagging(session, payload.event_id)
     if outcome.status == "retry":
         headers = {}
         if outcome.retry_after is not None:

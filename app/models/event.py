@@ -44,6 +44,10 @@ class Event(Base):
     # Denormalized onto the event so the FE's direct-Supabase snapshot/Realtime read
     # (which sees only public.events columns) can surface it. Null for text events.
     duration_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Auto-tagging output (app/services/tagger.py), set once by POST /internal/tag
+    # when the event had no user-selected tags. Not exposed to the client yet.
+    suggested_location: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    tag_reasoning: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     # Client-generated idempotency key for POST /events; UUID4 is globally unique.
     client_event_id: Mapped[str | None] = mapped_column(String(36), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(

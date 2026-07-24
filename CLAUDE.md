@@ -166,6 +166,25 @@ machine — CI's `lint` job is what actually enforces this for everyone.
   Live DBs need both:
   `ALTER TABLE recordings ADD COLUMN duration_sec INTEGER;` and
   `ALTER TABLE events ADD COLUMN duration_sec INTEGER;`.
+- Auto-tagging (Nebius Token Factory; `app/services/tagger.py` is the HTTP
+  client, `app/services/tagging.py` is the worker). Whenever a text event is
+  created/edited, or an audio event's transcription completes, with no
+  user-selected tags and some title/description text, `POST /internal/tag` is
+  enqueued the same way `/internal/transcribe` is (`app/services/task_queue.py`).
+  The model picks only from the user's *existing* tags (never invents one —
+  enforced server-side, not just prompted) and the worker writes `tag_ids`
+  plus two new nullable columns, not yet exposed to the client:
+  `suggested_location`, `tag_reasoning`. Sentiment is determined by the model
+  but only logged (`STEP=tagged`), not persisted. Config: `LIMON_TAGGER_API_KEY`
+  / `LIMON_TAGGER_MODEL` (default `Qwen/Qwen3-32B`) / `LIMON_TAGGER_BASE_URL`
+  (default `https://api.tokenfactory.nebius.com/v1/`) / `LIMON_TAGGER_TIMEOUT_S`.
+  Live DBs created before this column need:
+  `ALTER TABLE events ADD COLUMN suggested_location VARCHAR(200);`
+  `ALTER TABLE events ADD COLUMN tag_reasoning VARCHAR(2000);`
+  Enqueue calls from `create_event`/`update_event` run inline in the
+  synchronous request path (unlike `/internal/uploaded`'s Pub/Sub-triggered
+  enqueue), so a failure there — including Cloud Tasks being unconfigured, the
+  normal case in local dev — is logged and swallowed, not propagated.
 - CORS defaults to `["*"]` for development — restrict `LIMON_CORS_ORIGINS`
   before deploying.
 - `greenlet` is declared as a direct dependency (not left as SQLAlchemy's
