@@ -98,7 +98,9 @@ async def test_create_audio_event_creates_recording_and_signed_url(
 ) -> None:
     me = (await client.get(ME_URL)).json()
 
-    body = await _create(client, type="audio", description=None, clientEventId="client-audio-1")
+    body = await _create(
+        client, type="audio", description=None, durationSec=15, clientEventId="client-audio-1"
+    )
     event = body["event"]
     record_id = body["recordId"]
 
@@ -106,6 +108,7 @@ async def test_create_audio_event_creates_recording_and_signed_url(
     assert record_id is not None
     assert event["recordId"] == record_id
     assert event["description"] is None  # transcript arrives later, over Realtime
+    assert event["durationSec"] == 15  # echoed flat on the event for the FE's raw reads
 
     expected_key = f"v0/{me['id']}/{record_id}.m4a"
     assert body["signedUrl"] == f"https://storage.googleapis.com/signed/{expected_key}?sig=1"
@@ -118,6 +121,73 @@ async def test_create_audio_event_creates_recording_and_signed_url(
         assert recording.storage_key == expected_key
         assert recording.content_type == "audio/mp4"
         assert recording.state == "pending"
+        assert recording.duration_sec == 15  # also stored on the recording row
+
+
+async def test_audio_duration_defaults_to_null_when_omitted(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    fake_presign: list[tuple[str, str]],
+) -> None:
+    # Absent durationSec is tolerated (unknown length), stored null on both rows.
+    body = await _create(client, type="audio", description=None, clientEventId="audio-no-dur")
+    event = body["event"]
+
+    assert event["durationSec"] is None
+    async with session_factory() as session:
+        recording = await session.get(Recording, body["recordId"])
+        assert recording is not None
+        assert recording.duration_sec is None
+
+
+async def test_audio_duration_zero_is_valid(
+    client: AsyncClient, fake_presign: list[tuple[str, str]]
+) -> None:
+    # A sub-second tap floors to 0; 0 is a valid length, not a missing one.
+    event = (
+        await _create(
+            client, type="audio", description=None, durationSec=0, clientEventId="audio-zero"
+        )
+    )["event"]
+    assert event["durationSec"] == 0
+
+
+async def test_negative_duration_is_rejected(
+    client: AsyncClient, fake_presign: list[tuple[str, str]]
+) -> None:
+    response = await client.post(
+        EVENTS_URL,
+        json={**TEXT_EVENT, "type": "audio", "durationSec": -1, "clientEventId": "audio-neg"},
+    )
+    assert response.status_code == 422
+
+
+async def test_text_event_carries_no_duration(client: AsyncClient) -> None:
+    # text events never carry a duration, even if omitted from the create body.
+    event = (await _create(client))["event"]
+    assert event["durationSec"] is None
+
+
+async def test_duration_is_untouched_by_idempotent_retry(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    fake_presign: list[tuple[str, str]],
+) -> None:
+    first = await _create(
+        client, type="audio", description=None, durationSec=15, clientEventId="dup-dur"
+    )
+    # A retry with the same clientEventId but a differing durationSec must not clobber
+    # the value set on first create (Confirm 5).
+    second = await _create(
+        client, type="audio", description=None, durationSec=99, clientEventId="dup-dur"
+    )
+
+    assert second["event"]["id"] == first["event"]["id"]
+    assert second["event"]["durationSec"] == 15
+    async with session_factory() as session:
+        recording = await session.get(Recording, first["recordId"])
+        assert recording is not None
+        assert recording.duration_sec == 15
 
 
 async def test_repeat_client_event_id_is_idempotent_with_fresh_signed_url(

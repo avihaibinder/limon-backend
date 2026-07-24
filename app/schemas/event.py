@@ -41,6 +41,13 @@ class EventCreate(BaseModel):
         description="Client-generated idempotency key; a retry with the same value "
         "returns the same event (and a fresh signedUrl) instead of a duplicate.",
     )
+    duration_sec: int | None = Field(
+        default=None,
+        ge=0,
+        description="Recording length in whole seconds (audio only). Optional; absence "
+        "or null means unknown length. A negative or non-integer value is rejected (422).",
+        examples=[15],
+    )
 
 
 class EventUpdate(BaseModel):
@@ -71,6 +78,9 @@ class EventRead(BaseModel):
         validation_alias=AliasChoices("recording_id", "recordId"),
         serialization_alias="recordId",
     )
+    # Recording length in whole seconds; serialized as durationSec (to_camel). Null
+    # for text events and for audio without a stored length. Read off events.duration_sec.
+    duration_sec: int | None = None
     occurred_at: datetime
     created_at: datetime
     updated_at: datetime

@@ -74,6 +74,7 @@ async def create_event(
                 user_id=user_id,
                 storage_key=storage_key,
                 content_type=_AUDIO_CONTENT_TYPE,
+                duration_sec=payload.duration_sec,
             )
         )
         # Flush so the recording row exists before the event's FK references it;
@@ -88,6 +89,10 @@ async def create_event(
             occurred_at=occurred_at,
             client_event_id=payload.client_event_id,
             recording_id=record_id,
+            # Mirrored onto the event so the FE's raw Supabase snapshot/Realtime read
+            # surfaces it (it never reads the recordings table). Set once here; the
+            # idempotent-retry path above returns early and never rewrites it.
+            duration_sec=payload.duration_sec,
         )
         session.add(event)
         await session.commit()

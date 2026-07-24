@@ -35,6 +35,10 @@ class Recording(Base):
     storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False, default="audio/mp4")
     byte_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Recording length in whole seconds (floored, >= 0), sent by the FE on create.
+    # Nullable: historical rows and any create without it stay null. Approximate by
+    # design (the same value the FE shows as m:ss); never reconciled against bytes.
+    duration_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # pending | transcribing | done | failed. Indexed so the backlog re-enqueue
     # (up script) can find pending rows cheaply.
     state: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
