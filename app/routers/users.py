@@ -34,16 +34,13 @@ async def update_me(session: SessionDep, current_user: CurrentUserDep, payload: 
 
 @router.post("/me/demo-data", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def create_my_demo_data(session: SessionDep, current_user: CurrentUserDep) -> User:
-    """Backfill the authenticated (empty) account with demo history: 6 tags and
-    10 text events whose timestamps are shifted so the newest lands at "now"
-    (see ``app.services.demo_seed``). One-shot per account: the success stamps
-    ``demo_seeded_at`` and any later call 409s, as does an account that already
-    has events. Returns the updated profile."""
-    if current_user.demo_seeded_at is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Demo data was already created for this account",
-        )
+    """Backfill the authenticated account with demo history: 16 tags and 46 text
+    events at fixed dates (see ``app.services.demo_seed``). Existing *events* are
+    the only blocker: an account with any event 409s, while existing tags are
+    reused and do not block. Not one-shot -- an account that seeds, deletes every
+    event and calls again gets a fresh copy. The success (re)stamps
+    ``demo_seeded_at`` as a record of when demo data was last added, but that
+    stamp is never checked. Returns the updated profile."""
     if await events_service.has_events(session, user_id=current_user.id):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
