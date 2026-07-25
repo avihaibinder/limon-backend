@@ -142,13 +142,22 @@ machine — CI's `lint` job is what actually enforces this for everyone.
 
 - Tables are created automatically on startup; move to Alembic migrations
   before this needs real schema evolution in production.
-- Demo seeding: `POST /api/v1/users/me/demo-data` backfills the caller's empty
-  account with 6 demo tags + 10 text events (`app/services/demo_seed.py`,
-  sourced from `spec-local/mock_data/DEMO_SEED.mock-data.md`), timestamps
-  shifted so the newest row is "now". One-shot per account: success stamps
-  `users.demo_seeded_at`; a repeat call or a non-empty account 409s. FE
-  contract: `spec-local/FE_DEMO_SEED.md`. Live DBs created before this column
-  need `ALTER TABLE users ADD COLUMN demo_seeded_at TIMESTAMP WITH TIME ZONE;`.
+- Demo seeding: `POST /api/v1/users/me/demo-data` backfills the caller's account
+  with 16 demo tags + 46 text events (`app/services/demo_seed.py`, sourced from
+  `spec-local/mock_data/DEMO_SEED.mock-data.md`). **Existing events are the only
+  blocker** — a non-empty account 409s, existing tags are reused by name and do
+  not block. Not one-shot: delete every event and the button works again.
+  Success (re)stamps `users.demo_seeded_at`, but that stamp is never checked;
+  it is only a record of when demo data was last added. Timestamps are fixed
+  calendar dates (09-25 July 2026, Israel local, stored UTC), *not* rebased onto
+  "now", so the demo ages. Nine rows were recordings in the source: they are
+  seeded as text events keeping the `הקלטה (M:SS)` title, transcript as
+  description, no `recording_id`, and `duration_sec` parsed from the title — a
+  deliberate deviation from the audio-duration contract below, safe only while
+  the FE decides "is audio" from `type` rather than from `durationSec != null`.
+  FE contract: `spec-local/FE_DEMO_SEED.md` (the FE repo has its own copy that
+  Avihai needs to sync). Live DBs created before this column need
+  `ALTER TABLE users ADD COLUMN demo_seeded_at TIMESTAMP WITH TIME ZONE;`.
 - Tag API (contract: `../fe-be-comms/FE_CONTRACT.tags-crud.md`): names are trimmed,
   `POST /tags` is upsert-by-name (`201` new / `200` existing, existing color never
   overwritten), tags carry a nullable opaque `color` (up to 32 chars), and
@@ -185,6 +194,22 @@ machine — CI's `lint` job is what actually enforces this for everyone.
   synchronous request path (unlike `/internal/uploaded`'s Pub/Sub-triggered
   enqueue), so a failure there — including Cloud Tasks being unconfigured, the
   normal case in local dev — is logged and swallowed, not propagated.
+- Transcription retry budget (`limon-transcribe` queue, us-east1): capped at
+  **3 attempts** with 60s min / 600s max backoff (was 100 attempts / 3600s max,
+  which hammered the dead Nebius endpoint for hours). A recording therefore has
+  a ~3 minute window to succeed. Because the Nebius endpoint is normally DOWN,
+  anything recorded while it is down now exhausts its retries permanently.
+  Worse, the worker's failure path calls `_revert_pending`, so an exhausted
+  recording is left at `state="pending"`, never `failed` — it looks
+  indistinguishable from "not started yet". Re-drive one by hand with
+  `curl -X POST $API/internal/transcribe -d '{"recordId":"..."}'`; the worker's
+  claim makes that idempotent, and it no-ops with `reason=no_recording` if the
+  event was deleted. Config lives in the queue, not in code:
+  `gcloud tasks queues describe limon-transcribe --location=us-east1`.
+- `/internal/*` is **unauthenticated in production**: `LIMON_INTERNAL_TASK_TOKEN`
+  is unset and the OIDC path was never wired, so `require_internal_auth` returns
+  immediately and anyone can POST to `/internal/transcribe`. Interim by design
+  (see the docstring), but it belongs at the top of the security-review item.
 - CORS defaults to `["*"]` for development — restrict `LIMON_CORS_ORIGINS`
   before deploying.
 - `greenlet` is declared as a direct dependency (not left as SQLAlchemy's

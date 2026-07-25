@@ -24,9 +24,9 @@ class User(Base):
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    # When the user backfilled demo data via POST /users/me/demo-data; null =
-    # never. The FE reads it to decide whether to offer the demo-data button,
-    # and the endpoint 409s when it is already set.
+    # When demo data was last added via POST /users/me/demo-data; null = never.
+    # Informational only: nothing reads it back (an account holding any event is
+    # what blocks re-seeding), and it is re-stamped on every seed.
     demo_seeded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
