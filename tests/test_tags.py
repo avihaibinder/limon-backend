@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.event import Event
 from app.models.tag import Tag
 from app.models.user import User
+from app.services import tags as tags_service
+from tests.conftest import TEST_IDENTITY
 
 TAGS_URL = "/api/v1/tags"
 EVENTS_URL = "/api/v1/events"
@@ -87,25 +89,11 @@ async def test_create_tag_allows_name_already_used_by_other_user(
     await _create_tag(client, name="sleep")
 
 
-async def test_get_tag(client: AsyncClient) -> None:
-    created = await _create_tag(client)
-
-    response = await client.get(f"{TAGS_URL}/{created['id']}")
-    assert response.status_code == 200
-    assert response.json() == created
-
-
-async def test_get_tag_returns_404_for_unknown_id(client: AsyncClient) -> None:
-    response = await client.get(f"{TAGS_URL}/does-not-exist")
-    assert response.status_code == 404
-
-
 async def test_other_users_tag_is_invisible(
     client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
     foreign = await _seed_other_users_tag(session_factory)
 
-    assert (await client.get(f"{TAGS_URL}/{foreign.id}")).status_code == 404
     assert (await client.patch(f"{TAGS_URL}/{foreign.id}", json={"name": "x"})).status_code == 404
     assert (await client.delete(f"{TAGS_URL}/{foreign.id}")).status_code == 404
 
@@ -113,16 +101,19 @@ async def test_other_users_tag_is_invisible(
 async def test_list_tags_returns_only_own_tags_sorted_by_name(
     client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
+    """No HTTP route reads tags (the FE snapshots them from Supabase), but the
+    auto-tagger calls this service to pick from the user's existing tags."""
     await _seed_other_users_tag(session_factory, name="aardvark")
     await _create_tag(client, name="mood")
     await _create_tag(client, name="anxiety")
 
-    response = await client.get(TAGS_URL)
-    assert response.status_code == 200
-    body = response.json()
+    async with session_factory() as session:
+        items, total = await tags_service.list_tags(
+            session, limit=50, offset=0, user_id=TEST_IDENTITY["sub"]
+        )
 
-    assert body["total"] == 2
-    assert [item["name"] for item in body["items"]] == ["anxiety", "mood"]
+    assert total == 2
+    assert [item.name for item in items] == ["anxiety", "mood"]
 
 
 async def test_rename_tag(client: AsyncClient) -> None:
@@ -166,8 +157,8 @@ async def test_delete_tag(client: AsyncClient) -> None:
     response = await client.delete(f"{TAGS_URL}/{created['id']}")
     assert response.status_code == 204
 
-    response = await client.get(f"{TAGS_URL}/{created['id']}")
-    assert response.status_code == 404
+    # Gone: a second delete of the same id 404s.
+    assert (await client.delete(f"{TAGS_URL}/{created['id']}")).status_code == 404
 
 
 async def test_delete_tag_detaches_it_from_events(client: AsyncClient) -> None:

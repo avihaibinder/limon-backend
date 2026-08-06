@@ -94,12 +94,3 @@ class EventCreateResponse(BaseModel):
     event: EventRead
     record_id: str | None = None
     signed_url: str | None = None
-
-
-class EventList(BaseModel):
-    """Paginated collection of events."""
-
-    items: list[EventRead]
-    total: int
-    limit: int
-    offset: int

@@ -225,34 +225,6 @@ async def test_get_event_returns_404_for_unknown_id(client: AsyncClient) -> None
     assert response.status_code == 404
 
 
-async def test_list_events_paginates_newest_first(client: AsyncClient) -> None:
-    base = CLIENT_CREATED_AT_MS
-    await _create(client, title="older", clientCreatedAt=base, clientEventId="l1")
-    await _create(client, title="newer", clientCreatedAt=base + 1000, clientEventId="l2")
-    await _create(client, title="newest", clientCreatedAt=base + 2000, clientEventId="l3")
-
-    response = await client.get(EVENTS_URL, params={"limit": 2, "offset": 0})
-    assert response.status_code == 200
-    body = response.json()
-
-    assert body["total"] == 3
-    assert body["limit"] == 2
-    assert body["offset"] == 0
-    assert [item["title"] for item in body["items"]] == ["newest", "newer"]
-
-
-async def test_list_events_filters_by_tag(client: AsyncClient) -> None:
-    await _create(client, title="tagged", tagIds=["sleep"], clientEventId="t1")
-    await _create(client, title="other", tagIds=["mood"], clientEventId="t2")
-
-    response = await client.get(EVENTS_URL, params={"tag": "sleep"})
-    assert response.status_code == 200
-    body = response.json()
-
-    assert body["total"] == 1
-    assert body["items"][0]["title"] == "tagged"
-
-
 async def test_update_event_changes_only_provided_fields(client: AsyncClient) -> None:
     created = (await _create(client))["event"]
 
@@ -347,15 +319,3 @@ async def test_delete_another_users_event_returns_404(
     # And the row is untouched: still readable directly.
     async with session_factory() as session:
         assert await session.get(Event, other_id) is not None
-
-
-async def test_list_only_returns_the_callers_events(
-    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
-) -> None:
-    await _seed_other_users_event(session_factory)
-    mine = (await _create(client, title="mine"))["event"]
-
-    body = (await client.get(EVENTS_URL)).json()
-
-    assert body["total"] == 1
-    assert [item["id"] for item in body["items"]] == [mine["id"]]

@@ -43,12 +43,3 @@ class TagRead(BaseModel):
     user_id: str = Field(description="Owner of the tag.")
     name: str
     color: str | None
-
-
-class TagList(BaseModel):
-    """Paginated collection of tags."""
-
-    items: list[TagRead]
-    total: int
-    limit: int
-    offset: int

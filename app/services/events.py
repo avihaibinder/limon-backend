@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import step
@@ -137,29 +137,6 @@ async def get_event(session: AsyncSession, event_id: str, *, user_id: str) -> Ev
     """Fetch an event by id, scoped to its owner. A row that is not ``user_id``'s
     returns ``None`` (the caller turns that into a 404, never revealing existence)."""
     return await session.scalar(select(Event).where(Event.id == event_id, Event.user_id == user_id))
-
-
-async def list_events(
-    session: AsyncSession,
-    *,
-    user_id: str,
-    limit: int,
-    offset: int,
-    tag: str | None = None,
-) -> tuple[list[Event], int]:
-    """Return a page of the caller's events (newest first) and the total count."""
-    query = select(Event).where(Event.user_id == user_id)
-    if tag is not None:
-        # tag_ids is a JSON array of tag id strings; unpack it with SQLite's json_each.
-        query = query.where(
-            text(":tag IN (SELECT value FROM json_each(events.tag_ids))").bindparams(tag=tag)
-        )
-
-    total = await session.scalar(select(func.count()).select_from(query.subquery())) or 0
-    result = await session.scalars(
-        query.order_by(Event.occurred_at.desc()).limit(limit).offset(offset)
-    )
-    return list(result.all()), total
 
 
 async def update_event(session: AsyncSession, event: Event, payload: EventUpdate) -> Event:
