@@ -80,7 +80,6 @@ and provision a local user row on first sight (see `app/core/auth.py`).
 | Method | Path                  | Description                                      |
 | ------ | --------------------- | ------------------------------------------------ |
 | POST   | `/api/v1/events`      | Create an event (201)                            |
-| GET    | `/api/v1/events`      | List events — `limit`, `offset`, optional `tag`  |
 | GET    | `/api/v1/events/{id}` | Fetch one event (404 if missing)                 |
 | PATCH  | `/api/v1/events/{id}` | Partial update — only provided fields change     |
 | DELETE | `/api/v1/events/{id}` | Delete (204)                                     |
@@ -93,10 +92,12 @@ delete); names are unique per user. Foreign tags answer 404.
 | Method | Path                | Description                                          |
 | ------ | ------------------- | ---------------------------------------------------- |
 | POST   | `/api/v1/tags`      | Create a tag for the current user (201; 409 dup)     |
-| GET    | `/api/v1/tags`      | List own tags A→Z — `limit`, `offset`                |
-| GET    | `/api/v1/tags/{id}` | Fetch one of your tags (404 if missing/foreign)      |
 | PATCH  | `/api/v1/tags/{id}` | Rename (409 if the name is taken)                    |
 | DELETE | `/api/v1/tags/{id}` | Delete (204)                                         |
+
+There is no read route: the client takes its tag snapshot straight from
+Supabase (`public.tags`, owner-only RLS) and receives changes over Realtime.
+The API owns writes only. Same for events.
 
 ## Users API
 

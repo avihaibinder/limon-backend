@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.auth import CurrentUserDep, get_current_user
 from app.dependencies import SessionDep
@@ -6,7 +6,6 @@ from app.models.event import Event
 from app.schemas.event import (
     EventCreate,
     EventCreateResponse,
-    EventList,
     EventRead,
     EventUpdate,
 )
@@ -53,26 +52,6 @@ async def create_event(
         event=EventRead.model_validate(event),
         record_id=event.recording_id,
         signed_url=signed_url,
-    )
-
-
-@router.get("", response_model=EventList)
-async def list_events(
-    session: SessionDep,
-    current_user: CurrentUserDep,
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    tag: str | None = Query(default=None, description="Only return events carrying this tag."),
-) -> EventList:
-    """List the caller's events, newest first, with pagination and optional tag filtering."""
-    items, total = await events_service.list_events(
-        session, user_id=current_user.id, limit=limit, offset=offset, tag=tag
-    )
-    return EventList(
-        items=[EventRead.model_validate(item) for item in items],
-        total=total,
-        limit=limit,
-        offset=offset,
     )
 
 

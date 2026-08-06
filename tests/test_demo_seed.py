@@ -8,6 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.event import Event
+from app.models.tag import Tag
+from app.schemas.event import EventRead
 from app.services import demo_seed
 from tests.conftest import TEST_IDENTITY
 
@@ -16,13 +18,36 @@ ME_URL = "/api/v1/users/me"
 EVENTS_URL = "/api/v1/events"
 TAGS_URL = "/api/v1/tags"
 
-# The seed is larger than one default page; ask for all of it.
-ALL_EVENTS_URL = f"{EVENTS_URL}?limit=100"
-
 
 def _as_utc(value: datetime) -> datetime:
     """SQLite reads DateTime back naive; treat naive as UTC (same as Postgres)."""
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+
+
+async def _seeded_tags(session_factory: async_sessionmaker[AsyncSession]) -> list[Tag]:
+    """The caller's tags, alphabetically. Read from the DB: no HTTP route lists
+    tags (the FE snapshots them from Supabase)."""
+    async with session_factory() as session:
+        rows = await session.scalars(
+            select(Tag).where(Tag.user_id == TEST_IDENTITY["sub"]).order_by(Tag.name)
+        )
+        return list(rows)
+
+
+async def _seeded_events(session_factory: async_sessionmaker[AsyncSession]) -> list[dict]:
+    """The caller's events, newest first, in the shape the FE reads.
+
+    Read straight from the DB: there is no list endpoint (the FE takes its
+    snapshot from Supabase), and what these tests assert is what the seeder
+    persisted, not an HTTP surface.
+    """
+    async with session_factory() as session:
+        rows = await session.scalars(
+            select(Event)
+            .where(Event.user_id == TEST_IDENTITY["sub"])
+            .order_by(Event.occurred_at.desc())
+        )
+        return [EventRead.model_validate(row).model_dump(by_alias=True) for row in rows]
 
 
 async def test_create_demo_data_marks_the_user(client: AsyncClient) -> None:
@@ -36,18 +61,20 @@ async def test_create_demo_data_marks_the_user(client: AsyncClient) -> None:
     assert (await client.get(ME_URL)).json()["demo_seeded_at"] is not None
 
 
-async def test_demo_data_creates_all_events_and_tags(client: AsyncClient) -> None:
+async def test_demo_data_creates_all_events_and_tags(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
     await client.post(DEMO_URL)
 
-    events = (await client.get(ALL_EVENTS_URL)).json()
-    assert events["total"] == len(demo_seed._SEED_EVENTS) == 46
+    events = await _seeded_events(session_factory)
+    assert len(events) == len(demo_seed._SEED_EVENTS) == 46
     # Every seeded event is text and carries no recording, including the rows
     # that were recordings in the source.
-    assert all(e["type"] == "text" and e["recordId"] is None for e in events["items"])
+    assert all(e["type"] == "text" and e["recordId"] is None for e in events)
 
-    tags = (await client.get(TAGS_URL)).json()
-    assert {(t["name"], t["color"]) for t in tags["items"]} == set(demo_seed._TAGS.items())
-    assert tags["total"] == 16
+    tags = await _seeded_tags(session_factory)
+    assert {(t.name, t.color) for t in tags} == set(demo_seed._TAGS.items())
+    assert len(tags) == 16
 
 
 async def test_timestamps_are_absolute_israel_time(
@@ -78,9 +105,11 @@ async def test_timestamps_are_absolute_israel_time(
     assert [_as_utc(e.occurred_at) for e in events] == expected
 
 
-async def test_recording_rows_become_text_events_with_duration(client: AsyncClient) -> None:
+async def test_recording_rows_become_text_events_with_duration(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
     await client.post(DEMO_URL)
-    items = (await client.get(ALL_EVENTS_URL)).json()["items"]
+    items = await _seeded_events(session_factory)
 
     recordings = [e for e in items if e["title"] and e["title"].startswith("הקלטה")]
     assert len(recordings) == 9
@@ -113,10 +142,12 @@ def test_seed_durations_agree_with_their_titles() -> None:
             assert duration_sec is None
 
 
-async def test_lemon_rows_are_untitled_and_tagged(client: AsyncClient) -> None:
+async def test_lemon_rows_are_untitled_and_tagged(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
     """Rows with neither title nor description: an instant lemon press, tags only."""
     await client.post(DEMO_URL)
-    items = (await client.get(ALL_EVENTS_URL)).json()["items"]
+    items = await _seeded_events(session_factory)
 
     untitled = [e for e in items if e["title"] is None]
     assert len(untitled) == 9
@@ -125,18 +156,22 @@ async def test_lemon_rows_are_untitled_and_tagged(client: AsyncClient) -> None:
     assert all(e["tagIds"] for e in untitled)
 
 
-async def test_rows_without_tags_are_seeded_untagged(client: AsyncClient) -> None:
+async def test_rows_without_tags_are_seeded_untagged(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
     await client.post(DEMO_URL)
-    items = (await client.get(ALL_EVENTS_URL)).json()["items"]
+    items = await _seeded_events(session_factory)
 
     untagged = [e for e in items if not e["tagIds"]]
     assert {e["title"] for e in untagged} == {"קניות בסופר", "הקלטה (0:07)"}
 
 
-async def test_events_reference_the_created_tag_ids(client: AsyncClient) -> None:
+async def test_events_reference_the_created_tag_ids(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
     await client.post(DEMO_URL)
-    items = (await client.get(ALL_EVENTS_URL)).json()["items"]
-    tag_id_by_name = {t["name"]: t["id"] for t in (await client.get(TAGS_URL)).json()["items"]}
+    items = await _seeded_events(session_factory)
+    tag_id_by_name = {t.name: t.id for t in await _seeded_tags(session_factory)}
 
     motorcycle = next(e for e in items if e["title"] == "רעש של אופנוע מהרחוב")
     assert motorcycle["tagIds"] == [tag_id_by_name["רעש"], tag_id_by_name["תחושה רעה"]]
@@ -145,32 +180,38 @@ async def test_events_reference_the_created_tag_ids(client: AsyncClient) -> None
     assert doctor["tagIds"] == [tag_id_by_name["המתנה"], tag_id_by_name["גופני"]]
 
 
-async def test_existing_tag_with_seed_name_is_reused(client: AsyncClient) -> None:
+async def test_existing_tag_with_seed_name_is_reused(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
     created = await client.post(TAGS_URL, json={"name": "רעש"})
     assert created.status_code == 201
     existing_tag_id = created.json()["id"]
 
     assert (await client.post(DEMO_URL)).status_code == 201
 
-    tags = (await client.get(TAGS_URL)).json()
-    assert tags["total"] == 16  # reused, not duplicated
-    reused = next(t for t in tags["items"] if t["id"] == existing_tag_id)
-    assert reused["color"] is None  # the user's own tag keeps its color, no legend overwrite
+    tags = await _seeded_tags(session_factory)
+    assert len(tags) == 16  # reused, not duplicated
+    reused = next(t for t in tags if t.id == existing_tag_id)
+    assert reused.color is None  # the user's own tag keeps its color, no legend overwrite
 
-    items = (await client.get(ALL_EVENTS_URL)).json()["items"]
+    items = await _seeded_events(session_factory)
     motorcycle = next(e for e in items if e["title"] == "רעש של אופנוע מהרחוב")
     assert motorcycle["tagIds"][0] == existing_tag_id
 
 
-async def test_existing_tags_alone_do_not_block_seeding(client: AsyncClient) -> None:
+async def test_existing_tags_alone_do_not_block_seeding(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
     """Tags are not a blocker -- only events are."""
     assert (await client.post(TAGS_URL, json={"name": "משהו משלי"})).status_code == 201
 
     assert (await client.post(DEMO_URL)).status_code == 201
-    assert (await client.get(ALL_EVENTS_URL)).json()["total"] == 46
+    assert len(await _seeded_events(session_factory)) == 46
 
 
-async def test_account_with_events_conflicts(client: AsyncClient) -> None:
+async def test_account_with_events_conflicts(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
     created = await client.post(
         EVENTS_URL,
         json={"type": "text", "title": "my own note", "clientCreatedAt": 1_751_600_000_000},
@@ -182,11 +223,13 @@ async def test_account_with_events_conflicts(client: AsyncClient) -> None:
     assert "empty account" in response.json()["detail"]
 
     # The account is untouched: the one real event, no seeded rows, no mark.
-    assert (await client.get(ALL_EVENTS_URL)).json()["total"] == 1
+    assert len(await _seeded_events(session_factory)) == 1
     assert (await client.get(ME_URL)).json()["demo_seeded_at"] is None
 
 
-async def test_second_call_conflicts_while_events_exist(client: AsyncClient) -> None:
+async def test_second_call_conflicts_while_events_exist(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
     assert (await client.post(DEMO_URL)).status_code == 201
 
     response = await client.post(DEMO_URL)
@@ -194,22 +237,24 @@ async def test_second_call_conflicts_while_events_exist(client: AsyncClient) -> 
     assert "empty account" in response.json()["detail"]
 
     # Nothing was added by the rejected call.
-    assert (await client.get(ALL_EVENTS_URL)).json()["total"] == 46
+    assert len(await _seeded_events(session_factory)) == 46
 
 
-async def test_reseeding_after_deleting_every_event_is_allowed(client: AsyncClient) -> None:
+async def test_reseeding_after_deleting_every_event_is_allowed(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
     """The stamp is not a gate: empty the account and the button works again."""
     assert (await client.post(DEMO_URL)).status_code == 201
     first_stamp = (await client.get(ME_URL)).json()["demo_seeded_at"]
 
-    for event in (await client.get(ALL_EVENTS_URL)).json()["items"]:
+    for event in await _seeded_events(session_factory):
         assert (await client.delete(f"{EVENTS_URL}/{event['id']}")).status_code == 204
-    assert (await client.get(ALL_EVENTS_URL)).json()["total"] == 0
+    assert await _seeded_events(session_factory) == []
 
     # Still stamped from the first run, and that must not block a second seed.
     assert first_stamp is not None
     assert (await client.post(DEMO_URL)).status_code == 201
 
-    assert (await client.get(ALL_EVENTS_URL)).json()["total"] == 46
+    assert len(await _seeded_events(session_factory)) == 46
     # Tags were reused by name rather than duplicated.
-    assert (await client.get(TAGS_URL)).json()["total"] == 16
+    assert len(await _seeded_tags(session_factory)) == 16

@@ -1,9 +1,9 @@
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, HTTPException, Response, status
 
 from app.core.auth import CurrentUserDep
 from app.dependencies import SessionDep
 from app.models.tag import Tag
-from app.schemas.tag import TagCreate, TagList, TagRead, TagUpdate
+from app.schemas.tag import TagCreate, TagRead, TagUpdate
 from app.services import tags as tags_service
 
 router = APIRouter(prefix="/tags", tags=["tags"])
@@ -47,31 +47,6 @@ async def create_tag(
     if not created:
         response.status_code = status.HTTP_200_OK
     return tag
-
-
-@router.get("", response_model=TagList)
-async def list_tags(
-    session: SessionDep,
-    current_user: CurrentUserDep,
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-) -> TagList:
-    """List the authenticated user's tags alphabetically, with pagination."""
-    items, total = await tags_service.list_tags(
-        session, limit=limit, offset=offset, user_id=current_user.id
-    )
-    return TagList(
-        items=[TagRead.model_validate(item) for item in items],
-        total=total,
-        limit=limit,
-        offset=offset,
-    )
-
-
-@router.get("/{tag_id}", response_model=TagRead)
-async def get_tag(session: SessionDep, current_user: CurrentUserDep, tag_id: str) -> Tag:
-    """Fetch one of the authenticated user's tags by id."""
-    return await _get_own_tag_or_404(session, current_user.id, tag_id)
 
 
 @router.patch("/{tag_id}", response_model=TagRead)

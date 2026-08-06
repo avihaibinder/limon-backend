@@ -51,9 +51,16 @@ def _bearer(token: str) -> dict:
 
 
 async def test_requests_without_token_are_rejected(anon_client: AsyncClient) -> None:
-    for url in (ME_URL, "/api/v1/tags", "/api/v1/events"):
-        response = await anon_client.get(url)
-        assert response.status_code in (401, 403), url
+    # One route per router. Tags has no read route (the FE snapshots tags from
+    # Supabase), so it is probed with the write it does expose.
+    probes = (
+        ("GET", ME_URL),
+        ("POST", "/api/v1/tags"),
+        ("GET", "/api/v1/events/any-id"),
+    )
+    for method, url in probes:
+        response = await anon_client.request(method, url, json={"name": "x"})
+        assert response.status_code in (401, 403), f"{method} {url}"
 
 
 async def test_valid_token_authenticates_and_provisions(
