@@ -11,16 +11,32 @@ two sections always change in tandem, they belong in the same file. Edit via the
 
 ## Files
 
-<!-- One line per spec file, naming its concern. Add files as the design grows; when a
-     sub-folder appears, give it its own README and point to it here instead of listing every
-     file. Example:
-
-- **`architecture.md`**: tech stack, deployment, the major moving parts.
-- **`schema.md`**: data model.
-- **`flows.md`**: end-to-end flows.
-- **`roadmap.md`**: the single home for roadmap content, milestones and deferred / what's-next directions (never restated in the project README).
-- **`archive.md`**: historical content no longer reflecting live code.
--->
+- **`architecture.md`**: the stack, the `models → schemas → services → routers` layering, the
+  repo-wide conventions (async, UUID ids, UTC timestamps, `LIMON_`-prefixed settings), and the
+  deployed topology — Cloud Run, Supabase Postgres via the session pooler, GCS, Cloud Tasks.
+- **`auth.md`**: identity — Supabase JWT verification, why `users.id` *is* the JWT `sub`, one
+  account per Supabase identity, and what deleting an account has to reach.
+- **`data-model.md`**: the `events` / `tags` / `users` / `recordings` tables and their columns,
+  plus the no-migrations reality: `create_all` on startup, so live databases need hand-applied
+  `ALTER`s.
+- **`realtime-reads.md`**: the read path — the API owns writes, Supabase owns reads. RLS
+  policies, replica identity, the realtime publication, and what the client subscribes to.
+- **`api.md`**: the HTTP surface and its semantics — event create/read/update/delete, tag
+  upsert-by-name, `/users/me`, the upload presign, and the `/internal/*` worker routes.
+- **`demo-seed.md`**: the demo-history backfill — what it writes, the empty-account rule, and
+  the deliberate deviations in the seeded data.
+- **`transcription.md`**: audio from upload to transcript — GCS finalize, the Cloud Tasks queue,
+  the worker, and the retry budget with the failure mode it leaves behind.
+- **`tagging.md`**: automatic tag suggestion — when it fires, the existing-tags-only rule, and
+  how the model's output is handled.
+- **`ops.md`**: running it — deploy, the Nebius endpoint's raise/wire/tear-down lifecycle, how
+  production schema changes get applied, and the end-to-end rebuild runbook.
+- **`security.md`**: the known exposures and the trade-offs taken deliberately — unauthenticated
+  internal routes, open CORS, and Realtime's delete broadcasts.
+- **`roadmap.md`**: what is built, what is next, and what was consciously deferred.
+- **`open-questions.md`**: decisions not yet made, and known defects with no owner yet.
+- **`archive.md`**: designs that were agreed and then replaced, kept only to explain why the
+  current shape is what it is.
 
 ## Research notes (optional)
 

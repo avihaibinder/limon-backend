@@ -81,8 +81,9 @@ create policy "owner reads own events"
 -- tags: same owner-only read gate, for the tags Realtime subscription
 -- (FE_CONTRACT.tags-realtime.md). This consciously supersedes the earlier
 -- deny-all stance (FE_DECISIONS.v5): the policy also admits direct PostgREST
--- selects on `tags` by authenticated users; the FE keeps reading snapshots via
--- GET /tags, but the surface now exists.
+-- selects on `tags` by authenticated users. As of 2026-08-06 that is how the FE
+-- reads its tag snapshot -- GET /tags and GET /tags/{id} were deleted, so this
+-- policy is now the only tags read path, not a spare surface (see spec/realtime-reads.md).
 alter table public.tags enable row level security;
 drop policy if exists "owner reads own tags" on public.tags;
 create policy "owner reads own tags"
