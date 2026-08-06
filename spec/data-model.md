@@ -98,3 +98,8 @@ known fix, deferred rather than rejected (`roadmap.md`).
 
 `create_all` also does not manage RLS policies or replication publications; `setup.sql` owns
 those (`realtime-reads.md`).
+
+For a **new** database, `scripts/supabase/create_tables.sql` builds the schema without needing a
+running app pointed at it — the artifact you want when moving to another Postgres. It is
+generated from these models by `scripts/supabase/gen_create_tables.py`, so regenerate it rather
+than editing it when a model changes.

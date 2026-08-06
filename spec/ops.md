@@ -159,7 +159,8 @@ demo, delete it immediately after.
 ## Rebuilding the GCP side
 
 1. `deploy_gcp.sh` — service, bucket, runtime service account, database secret.
-2. Start the API once so `create_all` builds the tables.
+2. Create the tables: run `scripts/supabase/create_tables.sql`, or start the API once and let
+   `create_all` build them.
 3. Apply `scripts/supabase/setup.sql` — RLS, replica identity, publication
    (`realtime-reads.md`). Idempotent; re-run it every time the tables are recreated. Use a
    direct session connection, **never the transaction pooler**, for DDL.
@@ -195,7 +196,11 @@ into it. The same checklist covers a greenfield setup.
    `postgresql+asyncpg://postgres.<ref>:<password>@<pooler-host>:5432/postgres?ssl=require`.
    Add it as a new version of `limon-database-url`; Cloud Run picks up `:latest` on the next
    revision.
-4. **Tables**: start the API once against the new database.
+4. **Tables**: run `scripts/supabase/create_tables.sql` in the SQL editor. It exists precisely
+   for this — `create_all` would also build them, but only from a running app already wired to
+   the new database, and here you want the schema in place before anything connects. It is
+   generated from the models; regenerate with `scripts/supabase/gen_create_tables.py` if they
+   have moved on.
 5. **Realtime + RLS**: ensure Realtime is enabled for the project (so the `supabase_realtime`
    publication exists), then apply `setup.sql` and verify:
 
