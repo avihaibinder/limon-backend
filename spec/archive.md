@@ -120,8 +120,8 @@ and the dataset was 10 events and 6 tags with timestamps rebased onto "now".
 Now: 46 events and 16 tags at fixed calendar dates, blocked only by the account holding events,
 and repeatable (`demo-seed.md`).
 
-## `europe-west3`
+## Frankfurt
 
-Everything ran in Frankfurt to match the Supabase region. Production moved to `us-east1`; the
-cross-region latency to the EU database is known and accepted. Documents naming `europe-west3`
-— including the deploy scripts' defaults — predate the move.
+Everything once ran in `europe-west3` to match the Supabase region. Production is `us-east1`
+only; the cross-region latency to the EU database is known and accepted. The deploy scripts still
+default to the old region, which is a live foot-gun rather than history (`ops.md`).

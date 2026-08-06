@@ -36,8 +36,13 @@ was proven end to end on production in one hands-free pass on 2026-07-24.
 - **Alembic**, before the schema needs to evolve under real data. Hand-applied `ALTER`s have
   already caused one production outage (`data-model.md`).
 - **OIDC on `/internal/*`**, the top item of `security.md`.
-- **Deleting audio blobs on account deletion.** Currently they are orphaned in GCS
-  (`open-questions.md`) — a retention problem, not just a cost one.
+- **Delete audio blobs on account deletion.** `DELETE /users/me` removes the auth identity and
+  cascades the database rows, but the GCS objects at `v0/{userId}/{recordId}.m4a` stay in the
+  bucket, now referenced by nothing. This is a **retention** problem, not a storage-cost one:
+  audio belonging to someone who asked to be deleted is still there. Three plausible shapes —
+  delete the object prefix inline during delete-account (slow, and a partial failure is awkward
+  against the remote-first ordering in `auth.md`), a GCS lifecycle rule, or an asynchronous
+  sweep. Decided to do; method open.
 - **A security review.** Not started; `security.md` is its input.
 
 ## Deferred deliberately

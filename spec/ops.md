@@ -15,10 +15,11 @@
 | Supabase project | ref `jgwizkcobefvhrndojij` — `https://jgwizkcobefvhrndojij.supabase.co` (EU) |
 | Nebius parent project | `project-e00mbv9spr00twx6t5saw7` |
 
-The Supabase project is in the EU while Cloud Run is in `us-east1`; the cross-Atlantic latency
-is known and accepted. Earlier resources were in `europe-west3` — anything naming that region
-predates the move, including both deploy scripts' defaults and the still-existing
-`limon-502611-limon-blobs` bucket.
+Everything runs in `us-east1`. The Supabase project is in the EU; the cross-Atlantic latency is
+known and accepted.
+
+**Both deploy scripts default to the wrong region and bucket** — they predate the current setup.
+Always pass `--region us-east1`, and see the bucket defect below.
 
 ## Deploying
 
@@ -38,10 +39,28 @@ infrastructure changes, and re-apply the rest of the environment afterwards.
 push subscription, queue) and wires `LIMON_TASKS_*` plus transcriber and service-role values. It
 runs **after** the service exists, since it needs the service URL.
 
-**Known defect:** `provision_trigger.sh:78` derives the bucket as `${PROJECT}-limon-blobs`,
-which is the retired EU bucket, not `limon-502611-limon-blobs-us-east1`. The trigger chain was
-provisioned by hand because of this. Either add a `--bucket` flag or fix the derivation before
-relying on the script.
+**Known defect:** `provision_trigger.sh:78` derives the bucket as `${PROJECT}-limon-blobs`, not
+the `-us-east1` bucket the service actually uses. A bucket by that name still exists, so the
+script fails silently by wiring the GCS notification to the wrong one. The trigger chain was
+provisioned by hand because of this. Either add a `--bucket` flag or fix the derivation.
+
+The manual equivalent, which is what was actually run:
+
+```bash
+gcloud services enable pubsub.googleapis.com cloudtasks.googleapis.com --project $PROJECT
+gcloud tasks queues create limon-transcribe --project $PROJECT --location $REGION
+gcloud pubsub topics create limon-uploads --project $PROJECT
+gcloud pubsub topics add-iam-policy-binding limon-uploads --project $PROJECT \
+  --member="serviceAccount:$(gcloud storage service-agent --project $PROJECT)" \
+  --role=roles/pubsub.publisher
+gcloud storage buckets notifications create "gs://$BUCKET" --project $PROJECT \
+  --topic=limon-uploads --event-types=OBJECT_FINALIZE --payload-format=json
+gcloud pubsub subscriptions create limon-uploads-push --project $PROJECT \
+  --topic=limon-uploads --push-endpoint="$API/internal/uploaded" --ack-deadline=60
+gcloud run services update limon-api --project $PROJECT --region $REGION \
+  --update-env-vars "LIMON_TASKS_PROJECT=$PROJECT,LIMON_TASKS_LOCATION=$REGION,\
+LIMON_TASKS_QUEUE=limon-transcribe,LIMON_TASKS_WORKER_URL=$API"
+```
 
 ### Schema changes come first
 
@@ -111,27 +130,24 @@ recreate anyway, so stopping preserves nothing.
 **`LIMON_TRANSCRIBER_ENDPOINT_URL` and `_TOKEN` must be pushed onto Cloud Run after every
 raise** — they change every time, and they are dead the moment the endpoint is torn down.
 
-### These scripts do not match how they were documented
+Pushing the URL and token onto Cloud Run is a manual step:
 
-Planning documents described a `scripts/endpoint/wire` helper, a `scripts/endpoint/README.md`
-runbook, and a 2026-07-26 hardening pass on `up` (parsing the CLI's text output, an auth
-precheck, a by-name orphan guard, a `0600` log with the token masked).
+```bash
+gcloud run services update limon-api --project limon-502611 --region us-east1 \
+  --update-env-vars "LIMON_TRANSCRIBER_ENDPOINT_URL=$NEB_URL,LIMON_TRANSCRIBER_ENDPOINT_TOKEN=$NEB_TOKEN"
+```
 
-**None of it exists in this repository, on any branch.** What is on disk is the earlier version:
+`--update-env-vars` merges rather than replacing, so it will not clobber the rest of the
+environment.
 
-- `up` finds the URL by walking the create response for the first `https://` value. Nebius CLI
-  0.12.x prints **text**, not JSON, for `create`, so the walk misses and the script dies with
-  "URL not found" against an endpoint that was created and **is billing**. Id and token are
-  saved first, so `down` works and a re-run retries the URL — but expect the failure.
-- There is no `wire`. Pushing URL and token onto Cloud Run is manual, or
-  `provision_trigger.sh --transcriber-url/--transcriber-token`.
-- `scripts/endpoint/.create.json` is world-readable and has held a token.
-
-`scripts/e2e_recording_test.sh`, referenced in older notes, was written and deleted without ever
-being committed.
+`up` resolves the endpoint URL by walking the create response for the first `https://` value. If
+that misses — the Nebius CLI is public preview and its output format has shifted before — the
+script stops and dumps the raw response rather than guessing. Id and token are already saved at
+that point, so `down` still works and re-running `up` retries the URL.
 
 Cost safety, since nothing enforces it: after any session, confirm `nebius ai endpoint list`
-shows nothing running.
+shows nothing running. The one command that stops billing is
+`nebius ai endpoint delete --id <id>`.
 
 ## Demo sequencing
 

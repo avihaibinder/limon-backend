@@ -16,23 +16,11 @@ The fix is not obvious: marking it `failed` on budget exhaustion requires knowin
 count, which the worker does not see. Cloud Tasks sends `X-CloudTasks-TaskRetryCount`, which
 would work, but nothing reads it today.
 
-### The endpoint scripts do not match their documentation
+### `provision_trigger.sh` wires the wrong bucket
 
-`scripts/endpoint/wire` and `scripts/endpoint/README.md` are referenced throughout the planning
-documents as the operator runbook and the deploy helper. **Neither has ever existed in this
-repository, on any branch.** `up` still carries the URL-parsing bug they describe as fixed on
-2026-07-26 — it walks the create response for the first `https://` value, but the Nebius CLI
-prints text, not JSON, so it dies against an endpoint that was created and *is billing*
-(`ops.md`).
-
-Open question: rewrite the hardening, or delete the claims. The work was described in detail and
-apparently verified offline, then lost — the same fate as `scripts/e2e_recording_test.sh`.
-
-### `.create.json` is world-readable and has held a token
-
-`scripts/endpoint/.create.json` is `0644` on the operator's machine and contains a create
-response. The documented fix (a `0600` `.create.log` with the token masked) is part of the
-missing hardening above.
+It derives the bucket name in a way that does not match the bucket the service uses, and a bucket
+by the derived name exists, so it fails silently rather than erroring. Needs a `--bucket` flag or
+a fixed derivation; until then the trigger chain must be provisioned by hand (`ops.md`).
 
 ## Unresolved asks from the frontend
 
@@ -83,21 +71,6 @@ delete audio events whose recording is still `pending` with no stored object aft
 It compounds the exhausted-retry defect above — both leave a recording sitting at `pending`
 forever, and nothing distinguishes "never uploaded" from "uploaded but the endpoint was down"
 without checking GCS for the object.
-
-## Audio blobs outlive deleted accounts
-
-`DELETE /users/me` removes the Supabase auth identity and cascades away the user's `events`,
-`recordings`, and `tags` — but **the audio objects in GCS are never deleted**. A deleted account
-leaves its recordings sitting in the bucket at `v0/{userId}/{recordId}.m4a`, with the database
-rows that named them gone, so nothing points at them any more.
-
-This is a known gap, acknowledged to the frontend and backlogged rather than fixed. It is a data
-retention problem, not just a storage cost one: audio of someone who asked to be deleted is
-still there.
-
-Open question: delete the object prefix inline during delete-account (slow, and a partial
-failure is awkward given the remote-first ordering in `auth.md`), or apply a GCS lifecycle rule,
-or sweep asynchronously.
 
 ## Unanswered support question
 
