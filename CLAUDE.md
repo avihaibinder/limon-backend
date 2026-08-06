@@ -17,241 +17,79 @@ on `specflow upgrade`.
 
 # LimON Backend
 
-FastAPI backend for LimON, a React Native / Expo mobile app for quickly
-capturing life events (text notes, voice notes) and reviewing them on a
-timeline.
+Async FastAPI service for LimON, a React Native / Expo app for capturing life events (text and
+voice notes) and reviewing them on a timeline. Python 3.11+, Pydantic v2, SQLAlchemy 2 (async),
+Postgres in production via Supabase, SQLite locally.
 
-## Stack
+## Where the design lives
 
-Python 3.11+ · FastAPI · Pydantic v2 · SQLAlchemy 2 (async) · SQLite (dev)
+**`spec/` is the design record.** Read it before changing behavior rather than re-deriving from
+code — it carries the reasoning, the rejected alternatives, and the trade-offs taken knowingly,
+none of which the code can tell you. `spec/README.md` is the map.
 
-## Project layout
+Pull the two or three files covering what you are touching, not the whole thing:
 
-```
-app/
-├── main.py          # App factory, CORS, lifespan (table creation)
-├── core/config.py   # Settings via pydantic-settings (.env, LIMON_ prefix)
-├── db/               # Engine, session dependency, declarative base
-├── models/           # SQLAlchemy ORM models
-├── schemas/          # Pydantic request/response models
-├── services/         # Business logic + persistence (keeps routers thin)
-├── routers/           # HTTP endpoints, mounted under /api/v1
-└── dependencies.py    # Shared dependencies (SessionDep)
-tests/                 # pytest + httpx, isolated in-memory DB per test
-```
+| Touching | Read |
+|---|---|
+| layering, conventions, deployed shape | `spec/architecture.md` |
+| tokens, `users.id`, delete-account | `spec/auth.md` |
+| tables, columns, schema changes | `spec/data-model.md` |
+| anything the client reads | `spec/realtime-reads.md` |
+| routes, status codes, wire shapes | `spec/api.md` |
+| audio, transcription, the worker | `spec/transcription.md` |
+| auto-tagging | `spec/tagging.md` |
+| demo data | `spec/demo-seed.md` |
+| deploy, endpoint lifecycle, rebuilds | `spec/ops.md` |
+| exposures and trade-offs | `spec/security.md` |
+| what is next, what was deferred | `spec/roadmap.md` |
+| unresolved questions, known defects | `spec/open-questions.md` |
+| why something *used* to be different | `spec/archive.md` |
 
-Pattern per resource: `models/<x>.py` (ORM) → `schemas/<x>.py` (Pydantic) →
-`services/<x>.py` (business logic) → `routers/<x>.py` (thin HTTP layer).
-Follow this shape for any new resource (e.g. voice notes, insights).
-
-## Current state (as of 2026-07-06)
-
-Implemented: `events`, `tags`, `users` — full CRUD, mounted under `/api/v1`.
-No authentication yet (users are created directly via `POST /users`; the
-model already carries `provider` / `provider_subject` for future OAuth).
-No voice notes, PDF export, insights, or widget support yet. Tables are
-created automatically on startup (no migrations yet — see Notes below).
-
-## Feature backlog
-
-Legend: MVP = required for first release, P2 = later.
-
-### Capture
-- [x] Create empty event ("press the lemon") — MVP
-- [x] Create a text note — MVP
-- [ ] Create a voice note + transcribe to text (60s max) — MVP
-- [x] Tags (create/list/rename/delete) — MVP
-
-### Auth & account
-- [ ] Authentication (OAuth; `users` model already has `provider`/`provider_subject`) — MVP
-- [ ] Sign out — MVP
-- [ ] Delete account — MVP
-- [ ] Profile (incl. email) — MVP
-
-### Timeline & organization
-- [x] Timeline (list events) — MVP
-- [x] Edit event
-- [x] Delete event
-- [ ] Sort/display ordering — MVP
-- [ ] Date range selection: default week, plus week/month/quarter — MVP
-- [ ] Granularity for event display — P2
-
-### Export & insights
-- [ ] Export to PDF — MVP
-- [ ] Insights — MVP
-
-### Platform
-- [ ] Lock-screen widget — MVP
-- [ ] Alert when nothing recorded for a configurable period — P2
-- [ ] GPS tagging — P2
-
-### Infra
-- [x] Migrate DB target — decided: Supabase (Postgres) in production via
-  `LIMON_DATABASE_URL` (asyncpg, session pooler); SQLite stays the local
-  dev/test default
-- [~] Blob storage — Google Cloud Storage. `POST /api/v1/uploads/audio/presign`
-  returns a V4 signed PUT URL so the client uploads audio straight to GCS
-  (`app/services/storage.py`). Signs via ADC + IAM signBlob (no private key on
-  disk); config is bucket + optional signer SA only, so it repoints at any GCP
-  account by env alone. Still TODO: create the voice-note record from the
-  returned `object_key`, plus lifecycle/read-back
-- [ ] Deploy — target is Cloud Run (free tier), DB URL via Secret Manager
-- [x] CI — GitHub Actions runs lint (Ruff), format check, pytest (in-container), and a docker-compose smoke test on every push/PR
-- [ ] Testing: unit tests exist for events/tags/users; need FE test coverage too
-- [ ] Realtime DELETE privacy — P2. `events` and `tags` use `REPLICA IDENTITY
-  FULL` (required: Realtime checks the owner-only RLS policy for UPDATEs
-  against the WAL old-image, and under DEFAULT it lacks `user_id`, so updates
-  silently drop). Trade-off, accepted eyes-open with the FE
-  (`../fe-be-comms/FE_CONTRACT.tags-realtime.md` Confirm 3): Realtime applies
-  no RLS to DELETE broadcasts, so every subscriber receives deleted rows'
-  full old-record table-wide across users (tag names/colors, event
-  titles/bodies). Later: (a) test `REPLICA IDENTITY USING INDEX` on a unique
-  `(id, user_id)` index for `tags` — old image would carry just the two UUIDs,
-  enough for the UPDATE RLS check, but unverified against Supabase Realtime
-  and the index silently degrades identity to NOTHING if ever dropped; won't
-  help `events`, whose FE consumes old-record data on UPDATEs; or (b) the real
-  fix, migrate the whole Realtime setup to broadcast authorization (per-user
-  private channels)
-- [ ] Security review
-- [ ] "Adi/matn" oracle machine — context TBD, ask user before assuming scope
-
-## Conventions
-
-- Async everywhere: routers and services are `async def`, use `SessionDep`
-  (an `AsyncSession`) from `app.dependencies`.
-- Routers stay thin: validation + 404/409 handling only; business logic and
-  queries live in `services/`.
-- IDs are UUID4 strings (`String(36)` primary keys), not integers.
-- Timestamps are timezone-aware UTC (`DateTime(timezone=True)`).
-- Settings are read via `get_settings()` (lru_cached `Settings`), all env
-  vars prefixed `LIMON_`.
+`docs/`, `spec-local/`, and `../fe-be-comms/` were retired on 2026-08-06; everything
+load-bearing from them is in `spec/`. A comment or memory pointing at those paths is stale.
 
 ## Commands
 
-Dependency management and execution use [`uv`](https://docs.astral.sh/uv/)
-(not raw `pip`). `uv.lock` is the source of truth for pinned versions and
-must be committed with any `pyproject.toml` dependency change.
+Dependency management and execution use [`uv`](https://docs.astral.sh/uv/), never raw `pip`.
+`uv.lock` is the source of truth for pinned versions and must be committed with any
+`pyproject.toml` change.
 
 ```bash
-uv sync --extra dev                    # create .venv, install deps (pinned via uv.lock)
+uv sync --extra dev                    # create .venv, install deps
 uv run uvicorn app.main:app --reload   # dev server, docs at /docs
-uv run pytest                          # run tests
+uv run pytest                          # tests
 uv run ruff check .                    # lint
 uv run ruff format .                   # format
 uv add <package>                       # add a runtime dependency
 uv add --dev <package>                 # add a dev-only dependency
+docker compose up --build              # run the API in its container
 ```
 
-Linting/formatting is [Ruff](https://docs.astral.sh/ruff/) (config in
-`pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]`, 100-char line length).
-CI (`.github/workflows/ci.yml`) runs `ruff check` + `ruff format --check`,
-runs `pytest` inside the `api` container via `docker compose run` (so tests
-exercise the same environment the app ships in — matters more once a real
-DB service replaces SQLite), and a smoke test that boots the full compose
-stack and checks `/health`.
+Ruff config lives in `pyproject.toml`, 100-char lines. CI runs lint, format check, pytest inside
+the `api` container, and a compose smoke test. `uv run python scripts/hooks/install.py` installs
+an optional pre-push hook that blocks a push failing lint or format.
 
-Optional local enforcement: `uv run python scripts/hooks/install.py`
-installs a `pre-push` git hook (`scripts/hooks/pre-push`) that blocks
-`git push` if `ruff check` or `ruff format --check` fail. It's opt-in per
-machine — CI's `lint` job is what actually enforces this for everyone.
+## Writing code here
 
-## Notes
+- **Follow the shape**: `models/<x>.py` → `schemas/<x>.py` → `services/<x>.py` → `routers/<x>.py`.
+  Routers stay thin — validation and status codes only; queries and business rules live in
+  services. Rationale in `spec/architecture.md`.
+- **Async everywhere.** Use `SessionDep` from `app.dependencies`.
+- **Add tests with behavior changes.** `tests/` is pytest + httpx against an isolated in-memory
+  database per test.
+- **Don't restate the spec in code comments.** Comment the non-obvious *why* at the line; the
+  design belongs in `spec/`.
 
-- Tables are created automatically on startup; move to Alembic migrations
-  before this needs real schema evolution in production.
-- Demo seeding: `POST /api/v1/users/me/demo-data` backfills the caller's account
-  with 16 demo tags + 46 text events (`app/services/demo_seed.py`, sourced from
-  `spec-local/mock_data/DEMO_SEED.mock-data.md`). **Existing events are the only
-  blocker** — a non-empty account 409s, existing tags are reused by name and do
-  not block. Not one-shot: delete every event and the button works again.
-  Success (re)stamps `users.demo_seeded_at`, but that stamp is never checked;
-  it is only a record of when demo data was last added. Timestamps are fixed
-  calendar dates (09-25 July 2026, Israel local, stored UTC), *not* rebased onto
-  "now", so the demo ages. Nine rows were recordings in the source: they are
-  seeded as text events keeping the `הקלטה (M:SS)` title, transcript as
-  description, no `recording_id`, and `duration_sec` parsed from the title — a
-  deliberate deviation from the audio-duration contract below, safe only while
-  the FE decides "is audio" from `type` rather than from `durationSec != null`.
-  FE contract: `spec-local/FE_DEMO_SEED.md` (the FE repo has its own copy that
-  Avihai needs to sync). Live DBs created before this column need
-  `ALTER TABLE users ADD COLUMN demo_seeded_at TIMESTAMP WITH TIME ZONE;`.
-- Tag API (contract: `../fe-be-comms/FE_CONTRACT.tags-crud.md`): names are trimmed,
-  `POST /tags` is upsert-by-name (`201` new / `200` existing, existing color never
-  overwritten), tags carry a nullable opaque `color` (up to 32 chars), and
-  `DELETE /tags/{id}` detaches the id from all the owner's events in the same
-  transaction (each touched event gets a fresh `updated_at`, so Realtime echoes
-  it). Live DBs created before the color column need
-  `ALTER TABLE tags ADD COLUMN color VARCHAR(32);`.
-- Audio duration (contract: `../fe-be-comms/FE_CONTRACT.audio-duration.md`): audio
-  create bodies may carry an optional `durationSec` (whole seconds, integer `>= 0`;
-  negative/non-integer 422s, absence/null = unknown length, text events never send
-  it). Stored on `recordings.duration_sec` (audio metadata) and mirrored flat onto
-  `events.duration_sec` so the FE's raw Supabase snapshot/Realtime read surfaces it
-  (the FE never reads the recordings table). Set once at create; the idempotent
-  `client_event_id` retry never rewrites it. Echoed as `durationSec` on `EventRead`.
-  Live DBs need both:
-  `ALTER TABLE recordings ADD COLUMN duration_sec INTEGER;` and
-  `ALTER TABLE events ADD COLUMN duration_sec INTEGER;`.
-- Auto-tagging (Nebius Token Factory; `app/services/tagger.py` is the HTTP
-  client, `app/services/tagging.py` is the worker). Whenever a text event is
-  created/edited, or an audio event's transcription completes, with no
-  user-selected tags and some title/description text, `POST /internal/tag` is
-  enqueued the same way `/internal/transcribe` is (`app/services/task_queue.py`).
-  The model picks only from the user's *existing* tags (never invents one —
-  enforced server-side, not just prompted) and the worker writes `tag_ids`
-  plus two new nullable columns, not yet exposed to the client:
-  `suggested_location`, `tag_reasoning`. Sentiment is determined by the model
-  but only logged (`STEP=tagged`), not persisted. Config: `LIMON_TAGGER_API_KEY`
-  / `LIMON_TAGGER_MODEL` (default `Qwen/Qwen3-32B`) / `LIMON_TAGGER_BASE_URL`
-  (default `https://api.tokenfactory.nebius.com/v1/`) / `LIMON_TAGGER_TIMEOUT_S`.
-  Live DBs created before this column need:
-  `ALTER TABLE events ADD COLUMN suggested_location VARCHAR(200);`
-  `ALTER TABLE events ADD COLUMN tag_reasoning VARCHAR(2000);`
-  Enqueue calls from `create_event`/`update_event` run inline in the
-  synchronous request path (unlike `/internal/uploaded`'s Pub/Sub-triggered
-  enqueue), so a failure there — including Cloud Tasks being unconfigured, the
-  normal case in local dev — is logged and swallowed, not propagated.
-- Transcription retry budget (`limon-transcribe` queue, us-east1): capped at
-  **3 attempts** with 60s min / 600s max backoff (was 100 attempts / 3600s max,
-  which hammered the dead Nebius endpoint for hours). A recording therefore has
-  a ~3 minute window to succeed. Because the Nebius endpoint is normally DOWN,
-  anything recorded while it is down now exhausts its retries permanently.
-  Worse, the worker's failure path calls `_revert_pending`, so an exhausted
-  recording is left at `state="pending"`, never `failed` — it looks
-  indistinguishable from "not started yet". Re-drive one by hand with
-  `curl -X POST $API/internal/transcribe -d '{"recordId":"..."}'`; the worker's
-  claim makes that idempotent, and it no-ops with `reason=no_recording` if the
-  event was deleted. Config lives in the queue, not in code:
-  `gcloud tasks queues describe limon-transcribe --location=us-east1`.
-- `/internal/*` is **unauthenticated in production**: `LIMON_INTERNAL_TASK_TOKEN`
-  is unset and the OIDC path was never wired, so `require_internal_auth` returns
-  immediately and anyone can POST to `/internal/transcribe`. Interim by design
-  (see the docstring), but it belongs at the top of the security-review item.
-- CORS defaults to `["*"]` for development — restrict `LIMON_CORS_ORIGINS`
-  before deploying.
-- `greenlet` is declared as a direct dependency (not left as SQLAlchemy's
-  transitive/marker-based extra) because SQLAlchemy's platform marker for it
-  omits macOS Apple Silicon (`arm64`), so `uv sync` would otherwise skip
-  installing it on those machines and every async DB call would fail.
-- `docker compose up --build` runs the API in a container (`Dockerfile` +
-  `docker-compose.yml`), using `uv sync --frozen` at build time and `uv run
-  uvicorn ...` as the run command to mirror local dev. SQLite data is
-  persisted to the `limon-data` volume at `/app/data`. As real infra is
-  added, extend `docker-compose.yml` with those services rather than
-  introducing a separate compose file.
-- Production DB is Supabase Postgres: point `LIMON_DATABASE_URL` at the
-  IPv4 session pooler (`postgresql+asyncpg://postgres.<ref>:...@aws-0-<region>.pooler.supabase.com:5432/postgres?ssl=require`).
-  The direct `db.<ref>.supabase.co` host is IPv6-only and unreachable from
-  Cloud Run. The engine uses `pool_pre_ping=True` to survive pooler/idle
-  disconnects.
-- Blob storage is Google Cloud Storage via `google-cloud-storage`, signing
-  upload URLs with Application Default Credentials + IAM signBlob — no
-  key-style credentials in settings. Account-specific values live only in
-  `LIMON_GCS_BUCKET` / `LIMON_GCS_SIGNER_SERVICE_ACCOUNT`. Local dev on a
-  free-tier account:
-  `gcloud auth application-default login`, create a bucket + a signer SA,
-  grant your user `roles/iam.serviceAccountTokenCreator` on that SA and the
-  SA `roles/storage.objectAdmin` on the bucket, then set the two env vars.
-  On Cloud Run, the attached service account is the ADC identity.
-- This file is intentionally a starting point — update it as decisions are
-  made (DB choice, auth provider, storage, etc.).
+## Before you touch production
+
+- **There are no migrations.** Adding a model column requires the matching `ALTER` on the live
+  database *first*, or every query on that table 500s service-wide. See `spec/data-model.md`.
+- **Matan runs production DDL and data changes himself.** Hand him the SQL; do not execute it.
+- **Raising the Nebius endpoint costs money.** Ask first, and never tear it down yourself.
+- **Don't use `scripts/deploy_gcp.sh` for a code deploy** — it replaces the service environment.
+  `spec/ops.md` has the right command.
+
+## Commit conventions
+
+`spec: <change>` for anything under `spec/**`, `meta: <change>` for tooling and structure.
+Full protocol in `AGENTS.md`.
