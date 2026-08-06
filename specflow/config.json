@@ -1,0 +1,22 @@
+{
+  "config": {
+    "agents": "claude,cursor,copilot,bob,antigravity",
+    "commit": "user",
+    "mode": "spec-only",
+    "push": "user"
+  },
+  "initializedAt": "2026-08-06",
+  "kit": "specflow",
+  "kitVersion": "0.1.3",
+  "managed": {
+    ".agents/rules/specflow.md": "df6a0a94fee590a989c6ffd79c682cbcacc5df78ac8c6e866cbdb449daa814d6",
+    ".bob/rules/specflow.md": "6f96712961bd3ac5f8e816b93c75b7a67bc1a0136234576c09b1f2b1cc65d657",
+    ".cursor/rules/specflow.mdc": "b281f746b02d98a669274172dea2f51f36ede6bcbb7d960ae6250989ec2f0459",
+    ".github/copilot-instructions.md": "ba8b877017cc0afa650c429a499f0e094fad89e374854e884273f604351699c3",
+    "AGENTS.md": "b3cc093b410ce2f05f373d56febd39577b066206d1db0fee46ca923f1060ea62",
+    "CLAUDE.md": "a72611c447a512b598c5272a935e2978711c7d3c0bbf4bbcfd4776982aec0440",
+    "specflow/procedures/spec-edit.md": "63d8286bfadd4c1b8a4be8cc38e20814e0af3cf0642804ba1918cb0e1ab38519"
+  },
+  "schemaVersion": 1,
+  "upgradedAt": "2026-08-06"
+}

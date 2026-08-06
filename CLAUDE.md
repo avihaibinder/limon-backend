@@ -1,3 +1,20 @@
+<!-- specflow:start - managed by specflow; do not edit inside these markers (your edits block specflow upgrade). Add your own notes outside them. -->
+# CLAUDE.md
+
+This repo uses **[specflow](https://github.com/MatanKoby/specflow)** — a spec-driven protocol
+shared by all agents: design is written down and approved before code is written.
+
+**Read [`AGENTS.md`](AGENTS.md) first.** It is the full protocol: propose → approve → spec →
+build. The spec procedure lives in `specflow/procedures/` and is also installed as the `spec-edit`
+skill, which triggers automatically:
+
+- Before editing any `spec/**` file or persisting a design decision → `spec-edit`
+
+Project-specific guidance (what this codebase is, conventions, tooling) goes **below this line**
+or in your own sections — `AGENTS.md` and `specflow/**` are specflow-managed and get overwritten
+on `specflow upgrade`.
+<!-- specflow:end -->
+
 # LimON Backend
 
 FastAPI backend for LimON, a React Native / Expo mobile app for quickly
