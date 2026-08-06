@@ -3,6 +3,11 @@
 Snapshot taken 2026-08-06, to plan the first pass of `spec/`. Question it answers: **what
 already documents this system, and how much of it can be trusted?**
 
+> **The sources surveyed here have since been retired.** `docs/`, `spec-local/`, and
+> `../fe-be-comms/` were treated as gone the moment this pass finished, so `spec/` had to become
+> self-sufficient. This note is kept as the evidence trail — a record of what was read and what
+> absorbed it — not as a set of live pointers. Nothing in `spec/` depends on those paths.
+
 ## The short version
 
 There is no spec today. There are roughly 3,000 lines of *build plans* and *FE/BE negotiation

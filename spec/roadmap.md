@@ -36,6 +36,8 @@ was proven end to end on production in one hands-free pass on 2026-07-24.
 - **Alembic**, before the schema needs to evolve under real data. Hand-applied `ALTER`s have
   already caused one production outage (`data-model.md`).
 - **OIDC on `/internal/*`**, the top item of `security.md`.
+- **Deleting audio blobs on account deletion.** Currently they are orphaned in GCS
+  (`open-questions.md`) — a retention problem, not just a cost one.
 - **A security review.** Not started; `security.md` is its input.
 
 ## Deferred deliberately

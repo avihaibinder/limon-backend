@@ -29,11 +29,16 @@ disk**. On Cloud Run the attached service account signs as itself; locally a con
 service account is impersonated.
 
 The client must PUT with `Content-Type: audio/mp4` and echo
-`x-goog-content-length-range: 0,26214400`, both of which are baked into the signature. The
-**25 MB cap is enforced by GCS at the signature**, so an over-cap upload is rejected and the
-bytes never land — the limit cannot be bypassed by a client that ignores it. It sits at or below
-the transcription endpoint's own `MAX_UPLOAD_MB` so nothing can pass GCS and then fail
-transcription on size.
+`x-goog-content-length-range: 0,26214400`, both of which are baked into the signature. GCS
+rejects the PUT if either differs from what was signed.
+
+That number is **25 MiB** (25 × 1024 × 1024), not decimal 25 MB, and the distinction is
+deliberate: it must stay at or below the transcription endpoint's own `MAX_UPLOAD_MB` so a file
+cannot pass GCS and then fail transcription on size. The **cap is enforced by GCS at the
+signature**, so an over-cap upload is rejected and the bytes never land — a client that ignores
+the limit cannot bypass it.
+
+URLs are valid for 15 minutes by default (`LIMON_GCS_SIGNED_URL_TTL_SECONDS`).
 
 Re-PUTting the same URL replaces the object. If the URL has expired, the client re-creates with
 the same `clientEventId` for a fresh one (`api.md`).
@@ -87,8 +92,25 @@ sessions (`ops.md`), so "unavailable" is the steady state and must stay cheap.
 ## The transcription endpoint
 
 A container running `ivrit-ai/whisper-large-v3-ct2` (faster-whisper / CTranslate2) on a Nebius
-L40S serverless endpoint, behind a bearer token. `POST /transcribe` takes `multipart/form-data`
-with one field named `file` and returns `text`, `segments`, and timing numbers including `rtf`.
+L40S serverless endpoint, behind a bearer token.
+
+**`POST /transcribe`** — `multipart/form-data`, one field named `file` carrying the bytes
+(ogg, m4a, wav, mp3 and more; decoding is broad via PyAV). `200` returns:
+
+```json
+{ "text": "…", "segments": [{"start": 0.0, "end": 3.2, "text": "…"}],
+  "audio_duration_s": 19.41, "transcription_time_s": 1.68, "rtf": 0.087,
+  "params": {"device": "cuda", "compute_type": "float16", "beam_size": 10,
+             "condition_on_previous_text": true} }
+```
+
+Status codes, which the client's error taxonomy maps one-to-one: `400` undecodable, non-audio,
+or empty; `413` over the upload cap; `503` busy, with `Retry-After`; `500` unexpected, with a
+generic message and no internals leaked.
+
+**`GET /health`** returns `{status, model, device, compute_type}` and stays responsive during a
+transcription. It is for liveness only — **never** use it to probe a cold endpoint, since only an
+inference request wakes one.
 
 Fixed properties worth knowing before changing anything:
 
@@ -101,6 +123,17 @@ Fixed properties worth knowing before changing anything:
   pause while thinking.
 - Quality settings are fixed at `float16`, `beam_size=10`, `condition_on_previous_text` on,
   measured at `rtf` about 0.087 on the L40S — roughly `0.09 × audio_seconds` of processing.
+  The model is warmed at startup, so there is no per-request cold start, only the endpoint's own.
+
+If the container ever graduates into this repository (`roadmap.md`), three build constraints come
+with it, each of which has already caused a failure:
+
+- **One worker process, one model load.** Running multiple server workers loads a copy of the
+  model into VRAM per worker and OOMs the GPU. Serialize with a lock instead; at this volume
+  one-at-a-time is correct anyway.
+- **CUDA 12 with cuDNN 9**, matching CTranslate2's requirements. Version mismatches surface at
+  runtime as "cannot load cudnn", not at build time.
+- **Bake the model into the image** so it is not downloaded on every cold start.
 
 `transcriber_timeout_s` defaults to 90s, sized from that ratio with headroom for a warming
 endpoint: a 5-minute clip is about 30s of work. The stacked deadlines must stay ordered

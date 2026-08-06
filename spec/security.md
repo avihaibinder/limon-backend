@@ -69,6 +69,13 @@ operator's machine is world-readable and has held one (`ops.md`).
 No service-account key files exist anywhere: signing uses Application Default Credentials plus
 IAM `signBlob`, and on Cloud Run the attached service account signs as itself.
 
+## Deleted accounts leave their audio behind
+
+Delete-account removes the auth identity and cascades the database rows, but **not the GCS
+objects**. Audio belonging to a user who asked to be deleted stays in the bucket, now
+unreferenced by any row. Known, acknowledged to the frontend, and unfixed
+(`open-questions.md`).
+
 ## Logging discipline
 
 Audio bytes, transcript text, and the tagger's reasoning are **never** logged. The pipeline

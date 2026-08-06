@@ -5,9 +5,9 @@ it is, and to stop a future reader re-proposing something that was already tried
 
 Nothing here describes live code.
 
-## The original architecture plan (`docs/SPEC.md`)
+## The original architecture plan
 
-The first backend design document. Its framing survives — two-speed data model, fast synchronous
+The first backend design document (`docs/SPEC.md`, since removed). Its framing survives — two-speed data model, fast synchronous
 CRUD plus a slow asynchronous path, Cloud Run scaling to zero — but most of its concrete choices
 were replaced:
 
@@ -70,7 +70,7 @@ weight is whether an event has a recording.
 `provider_subject` only ever mirrored the Supabase `sub`, both it and the constraint were
 dropped and `users.id` became the `sub` itself (`auth.md`).
 
-This is why `docs/SPEC.md` and older documents refer to `get_user_by_provider_subject`.
+This is why the original design document referred to `get_user_by_provider_subject`.
 
 ## The dev shim
 

@@ -55,7 +55,10 @@ Response `201`: `{ "event": {…}, "recordId": "<uuid>|null", "signedUrl": "http
   backend understands it, so the two repos never need a synchronized deploy.
 
 **Idempotency.** `clientEventId` makes create retry-safe: a repeat returns the *same* event with
-a **freshly minted** `signedUrl`, never a duplicate row. The fresh URL matters because the
+a **freshly minted** `signedUrl`, never a duplicate row. The dedupe is **durable, not
+time-boxed** — it is a unique column on the row, so the same key returns the same event for as
+long as that event exists. One key can safely cover a whole recording take with no expiry
+window to reason about. The fresh URL matters because the
 original may have expired — re-creating with the same key is exactly how a client recovers from
 an expired upload URL. Nothing else is rewritten on the retry path, including `durationSec`.
 
@@ -68,8 +71,26 @@ nothing wrong.
 
 ### `PATCH /events/{id}`
 
-Only provided fields change (`title`, `description`, `occurredAt`, `tagIds`). Editing the title
-or description of an untagged event re-triggers auto-tagging (`tagging.md`).
+Only provided fields change (`title`, `description`, `occurredAt`, `tagIds`). Success is **`200`
+with the full updated event**, not `204` — the client reconciles its optimistic card from that
+body, so returning no body would read as a failure and revert an edit the server applied.
+
+Explicit `title: null` / `description: null` clear those fields. **`tagIds` must always be an
+array when sent; `tagIds: null` is not supported** because the column is non-null.
+
+Editing the title or description of an untagged event re-triggers auto-tagging (`tagging.md`).
+
+### Deletes are idempotent
+
+`DELETE` on events and tags returns `204`, and `404` for a missing or foreign id. The client
+treats `404` as success — the row is absent either way — which is safe precisely because a
+foreign id is indistinguishable from a missing one.
+
+### Validation failures are `422`
+
+FastAPI's default, not `400`: over-length or empty-after-trim names, malformed bodies, a negative
+`durationSec`. Only `401`, `404`, and `409` carry specific meaning; everything else non-2xx is
+one generic failure.
 
 ## Tags
 
@@ -86,8 +107,10 @@ idempotency key and no pre-flight check: creating "sleep" twice is simply not an
 `PATCH` to change a color.
 
 Names are trimmed before validation, so a whitespace-only name fails `min_length` with `422`
-rather than being stored. `(user_id, name)` is unique, and a lost race against a concurrent
-create of the same name resolves to the winner's row instead of surfacing the constraint error.
+rather than being stored. Matching is **exact after trim: case-sensitive, no Unicode
+normalization**, per user — `Sleep` and `sleep` are two different tags. Max length is 100.
+`(user_id, name)` is unique, and a lost race against a concurrent create of the same name
+resolves to the winner's row instead of surfacing the constraint error.
 
 `color` is opaque (up to 32 chars) and never interpreted server-side. On `PATCH`, `color: null`
 clears it while an omitted key leaves it untouched.

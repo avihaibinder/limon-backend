@@ -22,8 +22,13 @@ This is the decision the rest of the system leans on, so it is worth stating why
 - **Columns stay `String(36)`**, no library UUID type and no new import, precisely so the text
   comparison above is the natural one.
 
-Consequences, accepted deliberately: **one account per Supabase identity** — no multi-provider
-linking and no re-keying an account onto a different login. An earlier design carried a
+There is a sharp operational consequence worth knowing before it bites: **a new Supabase project
+orphans every row we hold.** Supabase mints new uids for the same Google accounts, so `users`,
+`events`, `tags`, and `recordings` all point at ids that no longer exist. Migrating a project
+therefore means copying the `auth` schema rows, not just ours — see `ops.md`.
+
+Other consequences, accepted deliberately: **one account per Supabase identity** — no
+multi-provider linking and no re-keying an account onto a different login. An earlier design carried a
 `provider_subject` column and a `(provider, provider_subject)` unique constraint; both only ever
 mirrored the `sub`, and both were dropped. `provider` survives for display only.
 
@@ -69,6 +74,10 @@ being reverted by the next login.
 the route answers `502`. The alternative ordering leaves an account half-removed — local data
 gone, login still working — with no way to retry into a clean state. This way a failed delete is
 fully retryable.
+
+Because re-signing-in mints a **new** Supabase uid, the same Google account returning after a
+delete starts genuinely empty rather than reattaching to anything. The one thing delete does not
+remove is the user's audio in GCS (`open-questions.md`).
 
 The admin client (`app/services/supabase_admin.py`) treats a `404` from Supabase as idempotent
 success, no-ops entirely when `supabase_url` is unset (local dev and tests, where there is no

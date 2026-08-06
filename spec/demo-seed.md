@@ -3,8 +3,9 @@
 `POST /users/me/demo-data` backfills the caller's account with a demo timeline so the app can be
 shown populated. It is triggered by a button, never automatically.
 
-**16 tags and 46 text events**, dated 09–25 July 2026. The dataset lives in
-`app/services/demo_seed.py`, sourced from `spec-local/mock_data/DEMO_SEED.mock-data.md`.
+**16 tags and 46 text events**, dated 09–25 July 2026. The dataset is embedded in
+`app/services/demo_seed.py` — the table of rows in that module *is* the source of truth. It was
+transcribed from a mock-data document that no longer exists, so the code is now the only copy.
 
 ## The rules
 
@@ -51,7 +52,19 @@ database is needed. Extending the dataset outside that window would break that a
 
 ## Client contract
 
-`spec-local/FE_DEMO_SEED.md` is the frontend-facing document; the frontend repo holds its own
-copy. One line of it is stale: it says to show the button when the fetched events list has
-`total: 0`. There is no list route any more (`realtime-reads.md`) — the condition is simply that
-the timeline is empty, which the client now determines from its Supabase snapshot.
+`POST /api/v1/users/me/demo-data`, no request body.
+
+- **`201`** — the body is the updated user profile, the same shape as `GET /users/me`, with
+  `demo_seeded_at` newly set.
+- **`409`** — one case only, `detail`: `"Account already has events; demo data can only be
+  created for an empty account"`.
+- **`401`** — missing or expired token, like any authenticated call.
+
+The client shows the button when the timeline is empty, and treats `201` and `409` identically:
+refresh the profile and the timeline, hide the button. An earlier `409` variant
+(`"Demo data was already created for this account"`) no longer exists.
+
+The frontend repo holds its own copy of this contract. Its stated trigger condition —
+a fetched events list reporting `total: 0` — predates the list route being removed
+(`realtime-reads.md`); the condition is now simply an empty timeline, which the client
+determines from its Supabase snapshot.

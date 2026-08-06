@@ -70,13 +70,52 @@ Deleted rows broadcast their full contents to every subscriber, table-wide acros
 2. **Migrate Realtime to broadcast authorization** with per-user private channels. This is the
    real fix and it is a rework of the whole Realtime setup.
 
+## Orphaned audio events are never reaped
+
+A client can create an audio event and then die before uploading — the app is killed, the network
+drops, the user gives up. The event exists, its recording stays `pending` forever, and no object
+ever lands in GCS. The client shows it as transcribing indefinitely, since there is no failed
+state on the client by design (`realtime-reads.md`).
+
+Reaping was accepted as the backend's job and **never built**. The sketched approach: periodically
+delete audio events whose recording is still `pending` with no stored object after a TTL.
+
+It compounds the exhausted-retry defect above — both leave a recording sitting at `pending`
+forever, and nothing distinguishes "never uploaded" from "uploaded but the endpoint was down"
+without checking GCS for the object.
+
+## Audio blobs outlive deleted accounts
+
+`DELETE /users/me` removes the Supabase auth identity and cascades away the user's `events`,
+`recordings`, and `tags` — but **the audio objects in GCS are never deleted**. A deleted account
+leaves its recordings sitting in the bucket at `v0/{userId}/{recordId}.m4a`, with the database
+rows that named them gone, so nothing points at them any more.
+
+This is a known gap, acknowledged to the frontend and backlogged rather than fixed. It is a data
+retention problem, not just a storage cost one: audio of someone who asked to be deleted is
+still there.
+
+Open question: delete the object prefix inline during delete-account (slow, and a partial
+failure is awkward given the remote-first ordering in `auth.md`), or apply a GCS lifecycle rule,
+or sweep asynchronously.
+
 ## Unanswered support question
 
-`fe-be-comms/FE_QUESTIONS.ios-auth.md` (2026-07-25) asks for a database and log investigation of
-one iOS tester whose Supabase session was missing — no `auth.users` row check, no session or
-revocation check, no Cloud Run log correlation was ever recorded as an answer. The tester email
-was never filled in. The frontend was fixing its own side (a real auth gate) regardless, so this
-may be moot; it has not been closed either way.
+An iOS tester (Expo Go, 2026-07-25) had no usable Supabase session: audio create failed before
+any request was sent because `getSession()` returned null, and delete-account failed too. Android
+on the same build worked end to end. The frontend's hypothesis was a revoked refresh token or a
+deleted auth user, while its persisted "signed in" flag still said otherwise.
+
+The backend was asked to check, for that account and a 2026-07-25 18:00–22:00 Israel-time
+window: whether an `auth.users` row exists and whether it was ever deleted and recreated; whether
+any live session or revoked refresh token exists; how many `public.events` rows that `user_id`
+has and their latest `created_at`; and whether any `POST /events` or `DELETE /users/me` requests
+from that user appear in the Cloud Run log with what status. Zero requests would confirm the
+frontend never sent them and close it as frontend-only.
+
+**None of that was ever recorded as answered**, and the tester's email was never filled in. The
+frontend was building a real auth gate regardless, so this may be moot — it has not been closed
+either way.
 
 ## Undocumented decision
 
