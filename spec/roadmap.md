@@ -91,3 +91,32 @@ Realtime DELETE privacy is P2 by label but is a genuine exposure; see `security.
 
 The transcription container is expected to eventually graduate into this repository as
 `transcriber/` rather than being called over HTTP from a separately-managed endpoint.
+
+## The transcription container now lives in its own repo
+
+**Further progress on transcription deployment is tracked there, not here.** A future session
+asking "what is next for the transcriber?" should be pointed at that repository, which carries its
+own `spec/` and its own roadmap.
+
+- **Repo:** `MatanKoby/hebrew-transcriber` (public), checked out locally at
+  `~/dev-projects/hebrew-transcriber`.
+- **Its roadmap and design record:** `spec/README.md` there, with `spec/roadmap.md`,
+  `spec/deploy-cpu.md`, `spec/deploy-gpu.md` and `spec/benchmark.md`. Work is queued in its
+  `BUILD_QUEUE.md`.
+
+The container built in `nbs-endpt-poc` was lifted into that repo on 2026-08-08 and given two
+deployment targets: the existing Nebius L40S GPU endpoint, and an always-on CPU deployment on an
+Oracle free-tier ARM VPS (aarch64 Ampere A1, 2 vCPU, 11GB RAM, reachable as `ssh oracle-vps`).
+
+The motive is cost. The L40S is down by design and costs money to raise (`ops.md`), which is why
+`transcription.md` has to tell operators to raise the endpoint *before* recording. An always-on
+zero-cost endpoint would delete that step, and with it the pending-backlog caveat under **Deferred
+deliberately** above.
+
+Whether the ARM box is good enough is still open, and that repo owns the benchmark that decides
+it. Two halves: transcription **quality** on CPU, and **latency**, which on 2 ARM cores is
+expected to be far worse than the L40S `rtf` of 0.087.
+
+Nothing in this backend changes yet. If the ARM target proves fast enough, the only change here is
+where `TRANSCRIBE_ENDPOINT_URL` points; the wire contract in `transcription.md` is unaffected. The
+graduation note above still stands as the longer-term intent and is not cancelled by this move.
