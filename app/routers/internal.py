@@ -14,14 +14,16 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.logging import step
 from app.dependencies import SessionDep
+from app.models.recording import Recording
 from app.schemas.pubsub import PubSubEnvelope, PubSubMessage
 from app.schemas.tagging import TagTask
 from app.schemas.transcription import TranscribeTask
-from app.services import tagging, task_queue, transcription
+from app.services import storage, tagging, task_queue, transcription
 from app.services.storage import record_id_from_audio_key
 
 router = APIRouter(prefix="/internal", tags=["internal"])
@@ -77,6 +79,7 @@ async def tag(
 
 @router.post("/uploaded")
 async def uploaded(
+    session: SessionDep,
     envelope: PubSubEnvelope,
     _auth: Annotated[None, Depends(require_internal_auth)],
 ) -> Response:
@@ -111,6 +114,20 @@ async def uploaded(
     record_id = record_id_from_audio_key(object_name)
     if record_id is None:
         step("finalize_ignored", reason="non_audio_key", objectId=object_name)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    recording = await session.scalar(
+        select(Recording).where(
+            Recording.id == record_id,
+            Recording.storage_key == object_name,
+        )
+    )
+    if recording is None:
+        # A signed upload can finish after account deletion. Remove only the
+        # exact object named by the trusted finalize notification and do not
+        # recreate work for a row that no longer exists.
+        await storage.delete_orphan_audio_object(object_name)
+        step("finalize_orphan_deleted", recordId=record_id, objectId=object_name)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     # Stepping stone 3: a finalize for one of our audio objects reached us.

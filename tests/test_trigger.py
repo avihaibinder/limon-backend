@@ -10,8 +10,11 @@ import json
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.services import task_queue
+from app.models.recording import Recording
+from app.models.user import User
+from app.services import storage, task_queue
 from app.services.storage import audio_object_key, record_id_from_audio_key
 
 REC_ID = "8f1c2b34-0000-4000-8000-000000000000"
@@ -73,9 +76,29 @@ def _record_enqueue(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return calls
 
 
-async def test_finalize_enqueues_transcription(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+async def _seed_recording(
+    session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    async with session_factory() as session:
+        session.add(User(id="user-1", provider="google"))
+        await session.flush()
+        session.add(
+            Recording(
+                id=REC_ID,
+                user_id="user-1",
+                storage_key=OBJECT_NAME,
+                content_type="audio/mp4",
+            )
+        )
+        await session.commit()
+
+
+async def test_finalize_enqueues_transcription(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _seed_recording(session_factory)
     calls = _record_enqueue(monkeypatch)
 
     response = await client.post("/internal/uploaded", json=_finalize_envelope())
@@ -85,10 +108,13 @@ async def test_finalize_enqueues_transcription(
 
 
 async def test_finalize_reads_object_name_from_data_payload(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # No objectId attribute: the name lives only in the base64 object-resource JSON.
     calls = _record_enqueue(monkeypatch)
+    await _seed_recording(session_factory)
     data = base64.b64encode(json.dumps({"name": OBJECT_NAME}).encode()).decode()
 
     response = await client.post(
@@ -126,7 +152,9 @@ async def test_non_audio_key_is_ignored(
 
 
 async def test_enqueue_failure_is_not_acked(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A failed enqueue must NOT ack, so Pub/Sub redelivers and retries. The ASGI
     # transport re-raises the app exception rather than turning it into a 5xx body.
@@ -134,6 +162,25 @@ async def test_enqueue_failure_is_not_acked(
         raise task_queue.TaskQueueError("cloud tasks down")
 
     monkeypatch.setattr(task_queue, "enqueue_transcription", _boom)
+    await _seed_recording(session_factory)
 
     with pytest.raises(task_queue.TaskQueueError):
         await client.post("/internal/uploaded", json=_finalize_envelope())
+
+
+async def test_finalize_deletes_late_orphan_instead_of_enqueuing(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _record_enqueue(monkeypatch)
+    deleted: list[str] = []
+
+    async def _delete(object_key: str) -> None:
+        deleted.append(object_key)
+
+    monkeypatch.setattr(storage, "delete_orphan_audio_object", _delete)
+
+    response = await client.post("/internal/uploaded", json=_finalize_envelope())
+
+    assert response.status_code == 204
+    assert calls == []
+    assert deleted == [OBJECT_NAME]

@@ -44,6 +44,9 @@ class FakeBucket:
     def blob(self, name: str) -> FakeBlob:
         return self.blobs.setdefault(name, FakeBlob(name))
 
+    def list_blobs(self, *, prefix: str):
+        return [blob for name, blob in self.blobs.items() if name.startswith(prefix)]
+
 
 class FakeClient:
     def __init__(self) -> None:
@@ -100,3 +103,30 @@ def test_storage_factory_requires_bucket_configuration(
             storage_module.get_blob_storage()
     finally:
         storage_module.get_blob_storage.cache_clear()
+
+
+async def test_delete_user_audio_is_prefix_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient()
+    bucket = client.bucket("limon-test")
+    own = bucket.blob("v0/user-1/rec-1.m4a")
+    own.generation = "3"
+    other = bucket.blob("v0/user-2/rec-2.m4a")
+    other.generation = "4"
+    monkeypatch.setattr(storage_module, "_client", lambda: client)
+    monkeypatch.setattr(
+        storage_module, "get_settings", lambda: Settings(gcs_bucket="limon-test")
+    )
+
+    await storage_module.delete_user_audio("user-1", {own.name})
+
+    assert own.deleted is True
+    assert other.deleted is False
+
+
+async def test_delete_user_audio_rejects_cross_owner_key() -> None:
+    with pytest.raises(storage_module.AudioCleanupError, match="does not match"):
+        await storage_module.delete_user_audio(
+            "user-1", {"v0/user-2/rec-2.m4a"}
+        )

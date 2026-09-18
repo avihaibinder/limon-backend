@@ -82,7 +82,9 @@ async def test_transport_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_no_op_when_supabase_url_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     # Local dev / tests: no real Supabase, so the call must do nothing (and never
     # touch the injected client) rather than fail.
-    monkeypatch.setattr(supabase_admin, "get_settings", lambda: Settings())
+    monkeypatch.setattr(
+        supabase_admin, "get_settings", lambda: Settings(_env_file=None)
+    )
 
     def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover - must not run
         raise AssertionError("no HTTP call should be made when Supabase is unconfigured")

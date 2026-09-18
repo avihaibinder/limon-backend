@@ -25,9 +25,11 @@ signs as its own attached SA. See ``_signed_url_signing_kwargs``.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Protocol
 
 import google.auth
@@ -49,6 +51,10 @@ _MAX_AUDIO_BYTES = 26214400
 
 class StorageNotConfiguredError(RuntimeError):
     """Raised when no GCS bucket is configured (the router maps this to 503)."""
+
+
+class AudioCleanupError(RuntimeError):
+    """Owned audio could not be fully removed during account deletion."""
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +91,96 @@ def record_id_from_audio_key(object_key: str) -> str | None:
         return None
     record_id = stem[: -len(_AUDIO_KEY_SUFFIX)]
     return record_id or None
+
+
+def user_id_from_audio_key(object_key: str) -> str | None:
+    """Return the owner segment from a valid LimON audio object key."""
+    parts = object_key.split("/")
+    if record_id_from_audio_key(object_key) is None or len(parts) != 3:
+        return None
+    return parts[1] or None
+
+
+def _audio_prefix(user_id: str) -> str:
+    if not user_id or user_id in {".", ".."} or "/" in user_id or "\\" in user_id:
+        raise AudioCleanupError("Invalid audio owner id")
+    return f"{_AUDIO_KEY_PREFIX}/{user_id}/"
+
+
+async def delete_user_audio(user_id: str, known_keys: set[str]) -> None:
+    """Delete every audio object under the authenticated owner's exact prefix.
+
+    ``known_keys`` comes from recording rows already scoped to ``user_id``. The
+    explicit ownership check makes a bad row fail closed rather than widening a
+    delete to another user's object.
+    """
+    prefix = _audio_prefix(user_id)
+    if any(user_id_from_audio_key(key) != user_id for key in known_keys):
+        raise AudioCleanupError("Recording storage key does not match its owner")
+    await asyncio.to_thread(_delete_user_audio_sync, user_id, prefix, known_keys)
+
+
+async def delete_orphan_audio_object(object_key: str) -> None:
+    """Delete one late upload after its matching recording row has disappeared."""
+    owner_id = user_id_from_audio_key(object_key)
+    if owner_id is None or not object_key.startswith(_audio_prefix(owner_id)):
+        raise AudioCleanupError("Refusing to delete an invalid audio object key")
+    await asyncio.to_thread(_delete_audio_sync, object_key)
+
+
+def _delete_user_audio_sync(user_id: str, prefix: str, known_keys: set[str]) -> None:
+    settings = get_settings()
+    try:
+        if settings.local_audio_dir:
+            root = Path(settings.local_audio_dir).resolve()
+            owner_dir = (root / _AUDIO_KEY_PREFIX / user_id).resolve()
+            if root not in owner_dir.parents:
+                raise AudioCleanupError("Local audio path escaped its configured root")
+            if owner_dir.exists():
+                for path in owner_dir.glob(f"*{_AUDIO_KEY_SUFFIX}"):
+                    path.unlink(missing_ok=True)
+                owner_dir.rmdir()
+
+        if settings.gcs_bucket:
+            bucket = _client().bucket(settings.gcs_bucket)
+            for blob in bucket.list_blobs(prefix=prefix):
+                if user_id_from_audio_key(blob.name) != user_id:
+                    raise AudioCleanupError("Storage listing crossed an owner boundary")
+                blob.delete(
+                    timeout=_DEFAULT_TIMEOUT_SECONDS,
+                    retry=_RETRY,
+                    if_generation_match=GCSBlobStorage._as_int(blob.generation),
+                )
+    except AudioCleanupError:
+        raise
+    except Exception as exc:
+        raise AudioCleanupError(f"Failed to delete owned audio: {type(exc).__name__}") from exc
+
+
+def _delete_audio_sync(object_key: str) -> None:
+    settings = get_settings()
+    try:
+        if settings.local_audio_dir:
+            root = Path(settings.local_audio_dir).resolve()
+            path = (root / object_key).resolve()
+            if root not in path.parents:
+                raise AudioCleanupError("Local audio path escaped its configured root")
+            path.unlink(missing_ok=True)
+
+        if settings.gcs_bucket:
+            bucket = _client().bucket(settings.gcs_bucket)
+            for blob in bucket.list_blobs(prefix=object_key):
+                if blob.name != object_key:
+                    continue
+                blob.delete(
+                    timeout=_DEFAULT_TIMEOUT_SECONDS,
+                    retry=_RETRY,
+                    if_generation_match=GCSBlobStorage._as_int(blob.generation),
+                )
+    except AudioCleanupError:
+        raise
+    except Exception as exc:
+        raise AudioCleanupError(f"Failed to delete orphan audio: {type(exc).__name__}") from exc
 
 
 # ---------------------------------------------------------------------------
