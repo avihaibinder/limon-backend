@@ -10,6 +10,7 @@ from app.services import demo_seed as demo_seed_service
 from app.services import events as events_service
 from app.services import users as users_service
 from app.services.supabase_admin import SupabaseAdminError
+from app.services.users import AccountDeletionError
 
 logger = logging.getLogger(__name__)
 
@@ -55,16 +56,15 @@ async def create_my_demo_data(session: SessionDep, current_user: CurrentUserDep)
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_me(session: SessionDep, current_user: CurrentUserDep) -> None:
     """Delete the authenticated user's account: removes the Supabase auth identity
-    and our ``users`` row, which cascades away the user's events, recordings, and
-    tags. If the Supabase side fails, nothing local is removed and the call 502s so
-    the client can retry."""
+    and all controlled database rows, queued tasks, and audio objects. Any incomplete
+    cleanup returns 502 rather than claiming deletion succeeded."""
     try:
         await users_service.delete_account(session, current_user)
-    except SupabaseAdminError as exc:
+    except (SupabaseAdminError, AccountDeletionError) as exc:
         # Log the cause server-side (it never reaches the client): without this a
         # misconfigured key and a Supabase outage are indistinguishable in the logs.
-        logger.error("Delete-account aborted before local deletion: %s", exc)
+        logger.error("Delete-account incomplete; no success returned: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Could not delete the account upstream; please retry.",
+            detail="Could not completely delete the account; please retry.",
         ) from exc

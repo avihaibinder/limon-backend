@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -217,8 +218,14 @@ async def test_delete_tag_leaves_other_users_events_alone(
 
 
 async def test_deleting_account_cascades_to_tags(
-    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    async def _delete_auth(_sub: str) -> None:
+        return None
+
+    monkeypatch.setattr("app.services.supabase_admin.delete_auth_user", _delete_auth)
     created = await _create_tag(client)
 
     response = await client.delete(ME_URL)
