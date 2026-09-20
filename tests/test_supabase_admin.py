@@ -82,7 +82,7 @@ async def test_transport_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_no_op_when_supabase_url_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     # Local dev / tests: no real Supabase, so the call must do nothing (and never
     # touch the injected client) rather than fail.
-    monkeypatch.setattr(supabase_admin, "get_settings", lambda: Settings())
+    monkeypatch.setattr(supabase_admin, "get_settings", lambda: Settings(_env_file=None))
 
     def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover - must not run
         raise AssertionError("no HTTP call should be made when Supabase is unconfigured")
@@ -94,7 +94,11 @@ async def test_no_op_when_supabase_url_unset(monkeypatch: pytest.MonkeyPatch) ->
 async def test_configured_url_without_service_key_is_a_misconfiguration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(supabase_admin, "get_settings", lambda: Settings(supabase_url=SUPABASE_URL))
+    monkeypatch.setattr(
+        supabase_admin,
+        "get_settings",
+        lambda: Settings(_env_file=None, supabase_url=SUPABASE_URL),
+    )
 
     with pytest.raises(SupabaseAdminNotConfiguredError):
         await supabase_admin.delete_auth_user(SUB)

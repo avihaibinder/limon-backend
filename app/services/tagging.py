@@ -14,13 +14,15 @@ Outcomes map to HTTP status at the router: ``noop``/``done``/``failed`` -> 2xx
 budget). Never logs entry text or the model's reasoning.
 """
 
+import asyncio
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import step
+from app.db.session import async_session_factory
 from app.models.event import Event
-from app.services import tagger
+from app.services import tagger, task_queue
 from app.services import tags as tags_service
 from app.services.tagger import (
     EndpointBusyError,
@@ -29,12 +31,35 @@ from app.services.tagger import (
     TaggerNotConfiguredError,
     TaggerResponseError,
 )
+from app.services.task_queue import TaskQueueNotConfiguredError
+
+_local_tagging_tasks: set[asyncio.Task[None]] = set()
 
 
 @dataclass(frozen=True)
 class Outcome:
     status: str  # noop | done | failed | retry
     retry_after: float | None = None
+
+
+async def dispatch_tagging(event_id: str) -> None:
+    """Queue tagging in production, or run it asynchronously in local development."""
+    try:
+        await task_queue.enqueue_tagging(event_id)
+    except TaskQueueNotConfiguredError:
+        task = asyncio.create_task(_run_local_tagging(event_id))
+        _local_tagging_tasks.add(task)
+        task.add_done_callback(_local_tagging_tasks.discard)
+        step("tagging_started_locally", eventId=event_id)
+
+
+async def _run_local_tagging(event_id: str) -> None:
+    try:
+        async with async_session_factory() as session:
+            outcome = await run_tagging(session, event_id)
+        step("local_tagging_finished", eventId=event_id, status=outcome.status)
+    except Exception as exc:  # Background work must never escape into the request loop.
+        step("local_tagging_failed", eventId=event_id, reason=type(exc).__name__)
 
 
 async def run_tagging(session: AsyncSession, event_id: str) -> Outcome:
@@ -73,11 +98,12 @@ async def run_tagging(session: AsyncSession, event_id: str) -> Outcome:
         step("failed", eventId=event_id, reason=type(exc).__name__)
         return Outcome("failed")
 
-    event.tag_ids = result.tag_ids
-    event.suggested_location = result.suggested_location
-    event.tag_reasoning = result.reasoning
+    allowed_ids = {tag["id"] for tag in existing_tags}
+    if any(tag_id not in allowed_ids for tag_id in result.tag_ids):
+        step("failed", eventId=event_id, reason="invalid_tag_id")
+        return Outcome("failed")
+
+    event.tag_ids = list(dict.fromkeys(result.tag_ids))
     await session.commit()
-    # Sentiment is not persisted (not part of the product surface yet); logged
-    # only, same as transcription.py logs char counts without the transcript.
-    step("tagged", eventId=event_id, sentiment=result.sentiment, tagCount=len(result.tag_ids))
+    step("tagged", eventId=event_id, tagCount=len(result.tag_ids))
     return Outcome("done")

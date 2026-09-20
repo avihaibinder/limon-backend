@@ -11,7 +11,7 @@
 | Bucket | `limon-502611-limon-blobs-us-east1` |
 | Cloud Tasks queue | `limon-transcribe` (us-east1) |
 | Pub/Sub | topic `limon-uploads`, push subscription `limon-uploads-push` |
-| Secrets | `limon-database-url`, `limon-supabase-service-role-key`, `nebius_token_factory_tagger_api_key` |
+| Secrets | `limon-database-url`, `limon-supabase-service-role-key`, Groq key injected as `LIMON_TAGGER_API_KEY` |
 | Supabase project | ref `jgwizkcobefvhrndojij` — `https://jgwizkcobefvhrndojij.supabase.co` (EU) |
 | Nebius parent project | `project-e00mbv9spr00twx6t5saw7` |
 
@@ -34,6 +34,10 @@ gcloud run deploy limon-api --source . --region us-east1 --project limon-502611
 `--set-env-vars`, which **replaces** the service's environment — wiping the Cloud Tasks,
 transcriber, and tagger variables it knows nothing about. Use it for first-time bootstrap or
 infrastructure changes, and re-apply the rest of the environment afterwards.
+
+Tagging uses GroqCloud. Its Cloud Run configuration is
+`LIMON_TAGGER_API_KEY` (secret), `LIMON_TAGGER_MODEL=qwen/qwen3.8-27b`, and
+`LIMON_TAGGER_BASE_URL=https://api.groq.com/openai/v1`; `LIMON_TAGGER_TIMEOUT_S` is optional.
 
 `scripts/provision_trigger.sh` stands up the trigger chain (topic, GCS finalize notification,
 push subscription, queue) and wires `LIMON_TASKS_*` plus transcriber and service-role values. It

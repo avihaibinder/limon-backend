@@ -4,21 +4,20 @@
 
 - After a **text event** is created or edited, or an **audio event's
   transcription completes**, if the event has no user-selected tags and has
-  some title/description text, the backend asks Nebius (Qwen3-32B) to
+  some title/description text, the backend asks GroqCloud (`qwen/qwen3.8-27b`) to
   suggest tags for it.
 - The model may only pick from the user's **existing** tags — it can never
-  create a new one (enforced server-side by filtering the response, not just
+  create a new one (enforced server-side by rejecting an invalid response, not just
   by prompting).
-- The model also reports a sentiment (used only to help it reason — logged,
-  not stored) and an optional explicit location mention, stored for later use
-  but not yet returned to the client.
+- The current model response contains only selected tag ids. High reasoning is
+  enabled but hidden, so no reasoning, sentiment, or location text is returned.
 - Runs the same way transcription does: enqueued as a Cloud Task, processed
   by an internal worker endpoint, idempotent under retries.
 
 ## Files added
 
-- `app/services/tagger.py` — Nebius chat-completions HTTP client (Hebrew
-  system prompt, strict `json_schema` response format, exception taxonomy
+- `app/services/tagger.py` — GroqCloud chat-completions HTTP client (Hebrew
+  event text, strict `json_schema` response format, exception taxonomy
   mirroring `transcriber.py`).
 - `app/services/tagging.py` — worker orchestration (load event → call tagger
   → write result), mirrors `transcription.py`.
@@ -27,8 +26,8 @@
 - `scripts/test_tagging_manual.py` — throwaway manual script, not wired into
   the app or pytest (`pyproject.toml`'s `testpaths = ["tests"]` already
   excludes `scripts/`). Calls `tagger.suggest_tags()` directly against the
-  real Nebius endpoint with a sample Hebrew entry and fake tags; prints the
-  raw result. Makes one real, billed API call — run it yourself, it isn't
+  real GroqCloud endpoint with a sample Hebrew entry and fake tags; prints the
+  selected synthetic tags. Makes one real, billed API call — run it yourself, it isn't
   run automatically.
 - `TAGGING_BUILD_LOG.md` — this file.
 
@@ -54,7 +53,11 @@
 - `CLAUDE.md` — documented the feature, config, and the manual `ALTER TABLE`
   needed on live databases.
 
-## Follow-up: non-Hebrew characters leaking into `reasoning`
+## Historical follow-up: non-Hebrew characters leaked into `reasoning`
+
+This section records behavior of the original integration. The GroqCloud migration described
+below removed visible reasoning and this sanitizer, so the issue is no longer part of the active
+tagging response.
 
 Live testing found the model sometimes mixes Chinese/Cyrillic characters
 mid-sentence into the `reasoning` field, even with `enable_thinking: false`
@@ -95,7 +98,7 @@ mid-sentence into the `reasoning` field, even with `enable_thinking: false`
 ## Follow-up: `reasoning` truncated mid-sentence
 
 Cause: no `max_tokens` was set on the request at all — it relied entirely on
-Nebius's own server-side default, which was too low for `reasoning` plus the
+the original provider's server-side default, which was too low for `reasoning` plus the
 rest of the structured response to complete.
 
 Fix: added `_MAX_TOKENS = 1000` in `app/services/tagger.py`, wired into the
@@ -147,6 +150,21 @@ forbidden-script leak, since Latin letters are explicitly allowed by
   but no `LIMON_SUPABASE_SERVICE_ROLE_KEY`, so tests that assume Supabase is
   unconfigured instead hit the real (unconfigured) delete-account code path.
   Nothing this feature touched — worth a separate fix if it bothers you.
-- The Qwen3 `chat_template_kwargs: {enable_thinking: false}` request shape
+- The original `chat_template_kwargs: {enable_thinking: false}` request shape
   was confirmed against the live endpoint (via `scripts/test_tagging_manual.py`)
   — no request-shape errors, structured output parsed successfully.
+
+## Current migration outcome: GroqCloud
+
+Tagging now uses GroqCloud's OpenAI-compatible chat-completions endpoint with
+`qwen/qwen3.8-27b`. The request enables `reasoning_effort: high` with hidden reasoning and uses
+strict Structured Outputs. The visible response contains only `tag_ids`, dynamically constrained
+to the authenticated event owner's supplied tag ids. Backend validation rejects any out-of-list
+id before saving rather than filtering it silently.
+
+Configuration remains under the existing names: `LIMON_TAGGER_API_KEY`,
+`LIMON_TAGGER_MODEL`, `LIMON_TAGGER_BASE_URL`, and `LIMON_TAGGER_TIMEOUT_S`. The current model and
+base URL are `qwen/qwen3.8-27b` and `https://api.groq.com/openai/v1`. Focused tests cover Hebrew
+selection, an empty result, invented-tag rejection, two-user isolation, provider errors, timeouts,
+malformed responses, and rate limiting. The migration's synthetic live check selected only ids
+from the supplied synthetic list.
