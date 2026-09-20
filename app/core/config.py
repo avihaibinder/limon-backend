@@ -97,12 +97,11 @@ class Settings(BaseSettings):
     # How long a presigned upload URL stays valid, in seconds (default 15 min).
     gcs_signed_url_ttl_seconds: int = 900
 
-    # Nebius Token Factory auto-tagging endpoint (OpenAI-compatible chat
-    # completions). Unset api_key means the worker treats tagging as
-    # unavailable rather than crashing, same convention as transcriber_*.
+    # GroqCloud auto-tagging endpoint (OpenAI-compatible chat completions).
+    # Unset api_key makes the worker treat tagging as temporarily unavailable.
     tagger_api_key: str | None = None
-    tagger_model: str = "Qwen/Qwen3-32B"
-    tagger_base_url: str = "https://api.tokenfactory.nebius.com/v1/"
+    tagger_model: str = "qwen/qwen3.8-27b"
+    tagger_base_url: str = "https://api.groq.com/openai/v1"
     tagger_timeout_s: float = 60.0
 
 

@@ -1,7 +1,7 @@
-"""Throwaway manual check for app.services.tagger against the real Nebius endpoint.
+"""Manual synthetic check for app.services.tagger against GroqCloud.
 
 Not a pytest test and not wired into the app -- run by hand to sanity-check the
-request shape (structured output, the disabled-thinking-mode assumption) against
+request shape (strict structured output and hidden high reasoning) against
 the live API before trusting it in the Cloud Tasks pipeline. Uses whatever
 LIMON_TAGGER_* is in .env, same as the app would; makes one real, billed call.
 
@@ -40,18 +40,13 @@ async def main() -> None:
         raise
 
     print("Result:")
-    print(f"  sentiment:          {result.sentiment}")
-    print(f"  suggested_location: {result.suggested_location!r}")
-    print(f"  tag_ids:            {result.tag_ids}")
+    print(f"  tag_ids:          {result.tag_ids}")
     tag_names = {t["id"]: t["name"] for t in _SAMPLE_TAGS}
-    print(f"  (resolved names:    {[tag_names.get(i, '???') for i in result.tag_ids]})")
-    print(f"  reasoning:          {result.reasoning}")
+    print(f"  resolved names:   {[tag_names.get(i, '???') for i in result.tag_ids]}")
 
     unknown = [i for i in result.tag_ids if i not in tag_names]
     if unknown:
-        # suggest_tags() already filters these out server-side -- if this ever
-        # prints, the filter itself is broken, not the model.
-        print(f"  !! unexpected: unfiltered unknown tag ids leaked through: {unknown}")
+        print(f"  !! unexpected unknown tag ids: {unknown}")
 
 
 if __name__ == "__main__":

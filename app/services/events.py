@@ -11,7 +11,7 @@ from app.models.event import Event
 from app.models.recording import Recording
 from app.schemas.event import EventCreate, EventUpdate
 from app.services import storage as storage_service
-from app.services import task_queue
+from app.services import tagging
 from app.services.task_queue import TaskQueueError
 
 # Content type the audio upload URL is signed for (m4a); the client must PUT with
@@ -27,15 +27,14 @@ def _occurred_at(client_created_at_ms: int) -> datetime:
 async def _maybe_enqueue_tagging(event: Event) -> None:
     """Enqueue auto-tagging if ``event`` has text and no user-selected tags.
 
-    Best-effort: this runs inline in a user-facing request (unlike the GCS
-    finalize -> Cloud Task chain), so an enqueue failure -- including Cloud
-    Tasks being unconfigured, the normal case in local dev -- must not fail
-    the caller's create/update. Logged and swallowed instead.
+    Best-effort: configured deployments enqueue a Cloud Task; local development
+    schedules the same worker in the background. A dispatch failure must not fail
+    the caller's create/update, so it is logged and swallowed.
     """
     if event.tag_ids or not (event.title or event.description):
         return
     try:
-        await task_queue.enqueue_tagging(event.id)
+        await tagging.dispatch_tagging(event.id)
     except TaskQueueError as exc:
         step("tagging_enqueue_failed", eventId=event.id, reason=type(exc).__name__)
 

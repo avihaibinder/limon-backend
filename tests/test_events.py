@@ -9,6 +9,8 @@ from app.models.event import Event
 from app.models.recording import Recording
 from app.models.user import User
 from app.services import storage as storage_service
+from app.services import tagging
+from app.services.task_queue import TaskQueueError
 
 EVENTS_URL = "/api/v1/events"
 ME_URL = "/api/v1/users/me"
@@ -53,7 +55,6 @@ async def test_create_text_event_returns_envelope_without_recording(client: Asyn
 
     assert body["recordId"] is None
     assert body["signedUrl"] is None
-
     event = body["event"]
     assert event["type"] == "text"
     assert event["title"] == TEXT_EVENT["title"]
@@ -63,6 +64,19 @@ async def test_create_text_event_returns_envelope_without_recording(client: Asyn
     assert event["id"]
     assert event["createdAt"]
     assert event["updatedAt"]
+
+
+async def test_text_event_creation_succeeds_when_tagging_dispatch_fails(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail_dispatch(_event_id: str) -> None:
+        raise TaskQueueError("queue unavailable")
+
+    monkeypatch.setattr(tagging, "dispatch_tagging", fail_dispatch)
+
+    body = await _create(client, tagIds=[], clientEventId="tagging-failure")
+
+    assert body["event"]["tagIds"] == []
 
 
 async def test_occurred_at_is_derived_from_client_created_at(client: AsyncClient) -> None:

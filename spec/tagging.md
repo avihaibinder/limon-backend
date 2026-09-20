@@ -28,61 +28,52 @@ machine. This is a conscious asymmetry: the worst case here is one redundant mod
 double-write or a lost transcript, so the cost of a claim is not worth paying. Duplicate
 delivery is therefore possible and harmless.
 
-On success it writes `tag_ids` plus two columns that are **not yet exposed to any client**:
-`suggested_location` and `tag_reasoning`.
+On success it writes the validated `tag_ids`. The existing `suggested_location` and
+`tag_reasoning` columns are not populated by the current tag-only integration.
 
 ## The existing-tags-only rule
 
 The model is given the user's full tag list (id and name) and must pick from it. It may return
 an empty list. It may never invent a tag.
 
-**That rule is enforced server-side, not merely requested in the prompt.** The parsed
-`tag_ids` are filtered down to the ids that were actually offered. A prompt instruction alone
-would be a suggestion; the filter is what makes it true.
+**That rule is enforced twice, not merely requested in the prompt.** The strict response schema
+dynamically enumerates the ids that were actually offered, and backend validation rejects the
+whole response if any out-of-list id nevertheless appears. A prompt instruction alone would be
+only a suggestion; these checks are what make the rule true.
 
 The worker deliberately fetches the full tag list with no pagination cap, unlike the API's
 paged reads — tagging needs every candidate, not a page of them.
 
 ## Talking to the model
 
-Nebius Token Factory's OpenAI-compatible chat completions API, default model `Qwen/Qwen3-32B`,
-with a Hebrew system prompt and a strict `json_schema` response format derived from the result
-model itself, so the schema and the parser cannot drift apart.
+GroqCloud's OpenAI-compatible chat-completions API, default model `qwen/qwen3.8-27b`, receives
+the Hebrew event text and the owning user's existing tag ids and names. It uses strict
+`json_schema` Structured Outputs with a single visible field: `tag_ids`.
 
 Several details were learned the hard way and should not be undone casually:
 
-- **Native Qwen3 "thinking" is disabled** (`chat_template_kwargs.enable_thinking: false`).
-  Combining it with strict `json_schema` output is unreliable across OpenAI-compatible
-  providers. The schema carries its own `reasoning` field instead, and the prompt asks the model
-  to reason there *first* and then fill the remaining fields from that conclusion.
-- **No schema field has a default.** Strict mode requires every property to be `required`; a
-  pydantic default would silently drop the field from `required`. A nullable field like
-  `suggested_location` is still required, just typed to allow `null`.
-- **`max_tokens` is set explicitly (1000).** The endpoint's own default was low enough to
-  truncate `reasoning` mid-sentence, with no cap configured at all.
-- **Reasoning text is scrubbed** to Hebrew, Latin, digits, and common punctuation. Even with
-  thinking disabled and an explicit prompt instruction, the model sometimes mixes stray Chinese,
-  Cyrillic, or Arabic characters into free text. Disallowed runs collapse to a single space.
-- **Location must be explicit.** The model is told to return a location only when one is
-  actually named in the text, and never to guess.
+- **Reasoning effort is high and hidden.** `reasoning_effort: high` asks the model to evaluate its
+  choices, while `reasoning_format: hidden` keeps reasoning out of the visible response.
+- **Strict Structured Outputs are enabled.** Every property is required and additional properties
+  are forbidden. The only property is the selected tag-id list.
+- **The schema is owner-specific.** Its enum is built from the tag rows loaded for
+  `event.user_id`; another user's id is not a legal model output.
+- **Backend validation remains authoritative.** Malformed JSON, extra fields, and invented ids are
+  rejected before the event is committed, even though strict decoding should already prevent them.
+- **`max_completion_tokens` is explicit.** The request leaves enough room for hidden reasoning and
+  the small final JSON response.
 
 Failure handling mirrors transcription: busy or rate-limited and endpoint-down are **soft**
 (`503` + `Retry-After`, retry within budget); an unparseable or schema-invalid response is
 **hard** — retrying will not fix a model that answered wrongly.
 
-## Sentiment is computed but not stored
-
-The model returns a sentiment (`positive` / `negative` / `neutral`) and it is **logged only**,
-in the `STEP=tagged` marker. It is not persisted anywhere, because nothing in the product
-consumes it yet. When something does, it needs a column — the current behavior is not a
-half-built feature but a deliberate stop.
-
 ## Logging
 
-Never entry text, never the model's reasoning. The `STEP=tagged` marker carries the event id,
-sentiment, and tag count only.
+Never entry text, tag names, model output, or reasoning. The `STEP=tagged` marker carries the
+event id and tag count only.
 
 ## Configuration
 
 `LIMON_TAGGER_API_KEY` (unset means tagging is treated as unavailable rather than crashing),
-`LIMON_TAGGER_MODEL`, `LIMON_TAGGER_BASE_URL`, `LIMON_TAGGER_TIMEOUT_S`.
+`LIMON_TAGGER_MODEL` (default `qwen/qwen3.8-27b`), `LIMON_TAGGER_BASE_URL` (default
+`https://api.groq.com/openai/v1`), and `LIMON_TAGGER_TIMEOUT_S`.
