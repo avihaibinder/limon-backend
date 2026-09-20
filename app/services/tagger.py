@@ -91,8 +91,7 @@ def _prepare(settings, api_key: str, text: str, existing_tags: list[dict[str, st
             {
                 "role": "user",
                 "content": (
-                    f"{_INSTRUCTIONS}\n\nAvailable tags:\n{tag_list}"
-                    f"\n\nHebrew event text:\n{text}"
+                    f"{_INSTRUCTIONS}\n\nAvailable tags:\n{tag_list}\n\nHebrew event text:\n{text}"
                 ),
             }
         ],

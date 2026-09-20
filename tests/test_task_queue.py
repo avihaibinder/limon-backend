@@ -54,9 +54,7 @@ async def test_cancel_account_tasks_deletes_only_owned_payload_ids(
     )
     monkeypatch.setattr(tasks_v2, "CloudTasksClient", lambda: client)
 
-    await task_queue.cancel_account_tasks(
-        event_ids={"event-1"}, recording_ids={"recording-1"}
-    )
+    await task_queue.cancel_account_tasks(event_ids={"event-1"}, recording_ids={"recording-1"})
 
     assert client.deleted == ["owned-event", "owned-recording"]
 

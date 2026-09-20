@@ -115,9 +115,7 @@ async def test_delete_user_audio_is_prefix_scoped(
     other = bucket.blob("v0/user-2/rec-2.m4a")
     other.generation = "4"
     monkeypatch.setattr(storage_module, "_client", lambda: client)
-    monkeypatch.setattr(
-        storage_module, "get_settings", lambda: Settings(gcs_bucket="limon-test")
-    )
+    monkeypatch.setattr(storage_module, "get_settings", lambda: Settings(gcs_bucket="limon-test"))
 
     await storage_module.delete_user_audio("user-1", {own.name})
 
@@ -127,6 +125,4 @@ async def test_delete_user_audio_is_prefix_scoped(
 
 async def test_delete_user_audio_rejects_cross_owner_key() -> None:
     with pytest.raises(storage_module.AudioCleanupError, match="does not match"):
-        await storage_module.delete_user_audio(
-            "user-1", {"v0/user-2/rec-2.m4a"}
-        )
+        await storage_module.delete_user_audio("user-1", {"v0/user-2/rec-2.m4a"})

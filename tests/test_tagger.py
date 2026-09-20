@@ -68,9 +68,7 @@ async def test_rejects_invented_tag_even_if_provider_returns_it() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(tagger.TaggerResponseError, match="outside the supplied list"):
-            await tagger.suggest_tags(
-                "טקסט", [{"id": "mine", "name": "שלי"}], client=client
-            )
+            await tagger.suggest_tags("טקסט", [{"id": "mine", "name": "שלי"}], client=client)
 
 
 @pytest.mark.parametrize("status", [401, 400, 500])

@@ -60,15 +60,11 @@ async def delete_account(session: AsyncSession, user: User) -> None:
     """
     # Lock the authenticated account row while collecting ownership. On
     # PostgreSQL this serializes FK inserts against the final user deletion.
-    owned_user = await session.scalar(
-        select(User).where(User.id == user.id).with_for_update()
-    )
+    owned_user = await session.scalar(select(User).where(User.id == user.id).with_for_update())
     if owned_user is None:
         return
 
-    event_ids = set(
-        await session.scalars(select(Event.id).where(Event.user_id == owned_user.id))
-    )
+    event_ids = set(await session.scalars(select(Event.id).where(Event.user_id == owned_user.id)))
     recordings = list(
         await session.scalars(select(Recording).where(Recording.user_id == owned_user.id))
     )
@@ -76,9 +72,7 @@ async def delete_account(session: AsyncSession, user: User) -> None:
     storage_keys = {recording.storage_key for recording in recordings}
 
     try:
-        await task_queue.cancel_account_tasks(
-            event_ids=event_ids, recording_ids=recording_ids
-        )
+        await task_queue.cancel_account_tasks(event_ids=event_ids, recording_ids=recording_ids)
         await storage.delete_user_audio(owned_user.id, storage_keys)
     except (task_queue.TaskQueueError, storage.AudioCleanupError) as exc:
         await session.rollback()

@@ -109,14 +109,11 @@ def _task_body(task) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def _is_owned_task(
-    body: dict, *, event_ids: set[str], recording_ids: set[str]
-) -> bool:
+def _is_owned_task(body: dict, *, event_ids: set[str], recording_ids: set[str]) -> bool:
     event_id = body.get("eventId")
     record_id = body.get("recordId")
-    return (
-        (isinstance(event_id, str) and event_id in event_ids)
-        or (isinstance(record_id, str) and record_id in recording_ids)
+    return (isinstance(event_id, str) and event_id in event_ids) or (
+        isinstance(record_id, str) and record_id in recording_ids
     )
 
 
