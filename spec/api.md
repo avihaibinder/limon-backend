@@ -146,10 +146,24 @@ Mounted at the root, outside `/api/v1`, without the user gate. Called by Cloud T
 | `POST` | `/internal/uploaded` | Pub/Sub push, on GCS object-finalize |
 | `POST` | `/internal/transcribe` | Cloud Tasks — `{"recordId": …}` |
 | `POST` | `/internal/tag` | Cloud Tasks — `{"eventId": …}` |
+| `POST` | `/internal/transcripts-ready` | The transcriber box, when results are waiting |
+| `POST` | `/internal/transcripts-sweep` | Cloud Scheduler, daily |
 
 `/internal/transcribe` and `/internal/tag` answer `200` for terminal outcomes and **`503` with
 `Retry-After`** when the work should be retried, which is how the queue's backoff is driven
 (`transcription.md`).
+
+`/internal/transcripts-ready` is the transcriber's callback. It always answers `200` once the
+collection cycle has run: the cycle is idempotent and anything it could not store stays on the box,
+so there is nothing a retry would fix that the next drain will not. The body is a nudge carrying no
+transcript and is ignored except for logging — the endpoint drains *everything* ready, not the job
+the body names. Unknown body fields are tolerated on purpose, because a `422` reads as a `4xx` to
+the box and a `4xx` is deliberately not retried.
+
+**These two are the exception to the line below**: they authenticate with the transcriber's shared
+secret (`X-Callback-Token`) and **fail closed** — an unset secret rejects rather than opens. An
+unset secret answers `503` and a wrong one `401`, which is not cosmetic: the box retries the first
+and not the second (`transcription.md`).
 
 `/internal/uploaded` distinguishes three cases deliberately: it **ACKs with `204`** for a
 well-formed message it chose not to act on (wrong event type, or a key that is not one of ours),

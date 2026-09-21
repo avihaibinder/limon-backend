@@ -29,7 +29,7 @@ two sections always change in tandem, they belong in the same file. Edit via the
   the worker, and the retry budget with the failure mode it leaves behind.
 - **`tagging.md`**: automatic tag suggestion — when it fires, the existing-tags-only rule, and
   how the model's output is handled.
-- **`ops.md`**: running it — deploy, the Nebius endpoint's raise/wire/tear-down lifecycle, how
+- **`ops.md`**: running it — deploy, the transcriber box and its rotating tunnel URL, how
   production schema changes get applied, and the end-to-end rebuild runbook.
 - **`security.md`**: the known exposures and the trade-offs taken deliberately — unauthenticated
   internal routes, open CORS, and Realtime's delete broadcasts.

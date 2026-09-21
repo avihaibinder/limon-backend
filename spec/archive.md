@@ -125,3 +125,36 @@ and repeatable (`demo-seed.md`).
 Everything once ran in `europe-west3` to match the Supabase region. Production is `us-east1`
 only; the cross-region latency to the EU database is known and accepted. The deploy scripts still
 default to the old region, which is a live foot-gun rather than history (`ops.md`).
+
+## Transcription was a synchronous call to a Nebius GPU endpoint
+
+Replaced on 2026-09-21 by the async job API against the always-on Oracle ARM box
+(`transcription.md`). Kept because two things in the live design only make sense against what they
+replaced.
+
+**The old shape.** `/internal/transcribe` claimed a recording, downloaded the audio, and `POST`ed it
+to `https://<endpoint>/transcribe` — one multipart request that returned the transcript in its own
+response body, which the same request then wrote to `events.description`. A container running
+`ivrit-ai/whisper-large-v3-ct2` on a Nebius L40S, `float16`, `beam_size=10`, measured at an `rtf` of
+about 0.087: roughly `0.09 × audio_seconds` of processing, fast enough that holding a request open
+for it was reasonable. `transcriber_timeout_s` was sized from that ratio.
+
+**Why it went.** Cost, not capability. The L40S is billed while it exists, so it was **down by
+design** and raised by hand for a demo or a test — which meant `transcription.md` had to instruct
+operators to raise the endpoint *before* recording, and "the endpoint is unavailable" was the steady
+state rather than an incident. An always-on zero-cost box deletes that step entirely.
+
+**The defect that went with it, and this is the part worth remembering.** The endpoint being down
+most of the time interacted badly with a capped retry budget: anything recorded while it was down
+exhausted its three attempts permanently. Worse, the soft-failure path reverted the row to
+`pending`, so an exhausted recording was left `pending` rather than `failed` and was
+**indistinguishable from one that had not started yet**. Recovery needed a human to notice and
+re-drive it by hand. The backstop sweep in the live design is what closes that, and its step 3
+exists for no other reason.
+
+The retry budget had also been 100 attempts with a 3600s ceiling before it was capped at 3, which
+hammered a dead endpoint for hours.
+
+**What did not change.** The trigger chain (GCS finalize → Pub/Sub → `/internal/uploaded` → Cloud
+Task), the atomic claim, the 25 MiB signed-URL cap, and `events.description` going non-null as the
+client's completion signal all predate the move and survived it untouched.

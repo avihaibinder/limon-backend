@@ -13,7 +13,7 @@
 | Pub/Sub | topic `limon-uploads`, push subscription `limon-uploads-push` |
 | Secrets | `limon-database-url`, `limon-supabase-service-role-key`, Groq key injected as `LIMON_TAGGER_API_KEY` |
 | Supabase project | ref `jgwizkcobefvhrndojij` — `https://jgwizkcobefvhrndojij.supabase.co` (EU) |
-| Nebius parent project | `project-e00mbv9spr00twx6t5saw7` |
+| Transcriber box | Oracle free-tier ARM VPS, `ssh oracle-vps` (its own repo owns it) |
 
 Everything runs in `us-east1`. The Supabase project is in the EU; the cross-Atlantic latency is
 known and accepted.
@@ -93,7 +93,9 @@ gcloud logging read \
 | `finalize_received` | GCS finalize reached the service | notification or push subscription (look for `finalize_ignored reason=…`) |
 | `task_enqueued` | Cloud Task enqueued | queue permissions (enqueue failure `5xx`s, Pub/Sub retries) |
 | `claimed` | worker claimed it (`pending → transcribing`) | the task never arrived, or `noop reason=claim_lost/already_done` |
-| `transcribed` | transcript written (`chars=N`) | the endpoint — `retry reason=…` is down, `failed reason=…` is bad audio |
+| `submitted` | audio handed to the box (`bytes=N`) | the box — `retry reason=…` is unreachable or its queue is full, `failed reason=…` is bad or over-long audio |
+| `callback_received` | the box says results are waiting | the callback — check `CALLBACK_URL` on the box and `callback.*` in its `GET /status` |
+| `transcribed` | transcript written (`chars=N`) | collection — run the sweep by hand; `collect_*` markers say why a job could not be stored |
 
 `recordings.state` is the durable companion, readable from Supabase after logs age out.
 
@@ -107,58 +109,87 @@ export JWT=$(curl -s "$SUPABASE_URL/auth/v1/token?grant_type=password" \
 
 The `STEP=` logs need no JWT and are the audit trail when tokens are inconvenient.
 
-## The transcription endpoint lifecycle
+## The transcriber box
 
-The Nebius L40S is **down by design** — an idle GPU is the only way this feature becomes
-expensive — and there is **no automated dead-man switch**. A standing Cloud Scheduler teardown is
-itself a way to drift past the free tier, and there is one operator watching one endpoint. The
-safety net is discipline. **Teardown is Matan's**, through the Nebius web console.
+An always-on Oracle free-tier ARM VPS, reachable as `ssh oracle-vps`. It costs nothing, runs
+continuously, and **replaced the Nebius L40S on 2026-09-21** — so the raise-before-recording
+sequencing this section used to carry is gone with it (`archive.md`). Nebius teardown is Matan's and
+the endpoint is already down.
 
-Raising it costs money. Ask first.
+Its own repo (`~/dev-projects/hebrew-transcriber`, private) owns deployment, the contract and the
+runbook for the box itself. What follows is only the LimON-side configuration.
 
+### The base URL rotates, and that is normal
+
+The box is fronted by a **Cloudflare Quick Tunnel**, whose address is reminted whenever
+`cloudflared` restarts — typically a reboot. There is no API to discover it; the startup banner is
+the only place it exists, and the tunnel is deliberately `restart: "no"` so that an automatic
+restart cannot silently invalidate an address already in use.
+
+**Treat "the transcriber stopped resolving" as an operating condition, not an incident.** Nothing is
+lost while it is stale: submissions fail soft, work sits `pending`, and the daily sweep re-drives it
+once the URL is corrected. What does happen is that transcription silently stops, and nothing alerts
+on that (`open-questions.md`).
+
+After any reboot of the box:
+
+```bash
+ssh oracle-vps 'cd ~/hebrew-transcriber && docker compose --profile tunnel up -d cloudflared'
+ssh oracle-vps 'cd ~/hebrew-transcriber && ./deploy/cpu/tunnel-url.sh --check'
 ```
-scripts/endpoint/up     # create + warm, print URL and token
-scripts/endpoint/down   # delete it
-```
 
-`up` is idempotent — it reuses the endpoint in its gitignored state file rather than creating a
-second billing one — self-generates the data-plane token, and warms the endpoint with one
-throwaway transcription. **Warmup doubles as the readiness probe**: only an inference request
-wakes a cold endpoint, so never health-ping to probe. State (`id`, `url`, `token`) is written
-*immediately after create, before URL resolution*, so a billing endpoint can never be orphaned
-without its id.
-
-`down` **deletes** rather than stops: deleted is true zero cost, and both values change on every
-recreate anyway, so stopping preserves nothing.
-
-**`LIMON_TRANSCRIBER_ENDPOINT_URL` and `_TOKEN` must be pushed onto Cloud Run after every
-raise** — they change every time, and they are dead the moment the endpoint is torn down.
-
-Pushing the URL and token onto Cloud Run is a manual step:
+Then push the new address onto Cloud Run. `--update-env-vars` merges rather than replacing, so it
+will not clobber the rest of the environment:
 
 ```bash
 gcloud run services update limon-api --project limon-502611 --region us-east1 \
-  --update-env-vars "LIMON_TRANSCRIBER_ENDPOINT_URL=$NEB_URL,LIMON_TRANSCRIBER_ENDPOINT_TOKEN=$NEB_TOKEN"
+  --update-env-vars "LIMON_TRANSCRIBER_BASE_URL=$BOX_URL"
 ```
 
-`--update-env-vars` merges rather than replacing, so it will not clobber the rest of the
-environment.
+### Wiring the two sides together
 
-`up` resolves the endpoint URL by walking the create response for the first `https://` value. If
-that misses — the Nebius CLI is public preview and its output format has shifted before — the
-script stops and dumps the raw response rather than guessing. Id and token are already saved at
-that point, so `down` still works and re-running `up` retries the URL.
+The token and the callback secret are **Secret Manager references**, not plain environment
+variables, matching `limon-database-url` and the other two. `LIMON_TRANSCRIBER_ENDPOINT_TOKEN` was a
+plain env var on the old endpoint and should not be copied.
 
-Cost safety, since nothing enforces it: after any session, confirm `nebius ai endpoint list`
-shows nothing running. The one command that stops billing is
-`nebius ai endpoint delete --id <id>`.
+On the box, so it can call us back:
 
-## Demo sequencing
+```
+CALLBACK_URL=https://limon-api-610976310144.us-east1.run.app/internal/transcripts-ready
+CALLBACK_AUTH=secret
+CALLBACK_SECRET=<the value of LIMON_TRANSCRIBER_CALLBACK_SECRET>
+```
 
-Raise the endpoint **first, then record.** Nothing sweeps up recordings made while it was down
-(`roadmap.md`). Cold start is the slow part; once running the endpoint is fast (`rtf` around
-0.05). Raise it 30–45 minutes ahead, verify with one real transcription, keep it up through the
-demo, delete it immediately after.
+**`CALLBACK_AUTH=oidc` cannot work from this box** and must not be set: it mints the token from the
+GCP metadata server, which only resolves when the sender is itself on GCP (`transcription.md`).
+
+The daily backstop is Cloud Scheduler against `/internal/transcripts-sweep`, carrying the same
+secret header the callback uses:
+
+```bash
+gcloud scheduler jobs create http limon-transcripts-sweep \
+  --project limon-502611 --location us-east1 --schedule "0 4 * * *" \
+  --uri "https://limon-api-610976310144.us-east1.run.app/internal/transcripts-sweep" \
+  --http-method POST --headers "X-Callback-Token=$CALLBACK_SECRET"
+```
+
+`cloudscheduler.googleapis.com` is **not enabled** on the project and has to be turned on first.
+
+### Verifying it end to end
+
+`scripts/transcriber/roundtrip.py` drives the whole cycle against the live box — submit, drain,
+persist, acknowledge — using the real service functions and a throwaway in-memory database. It
+covers everything except the wakeup, which needs an endpoint the box can reach:
+
+```bash
+uv run python scripts/transcriber/roundtrip.py \
+  ~/dev-projects/hebrew-transcriber/audio/clip1_normal.ogg
+```
+
+**It filters its drains by the ids it submitted, and that is not optional.** The box has one queue
+and no per-caller scoping, so an unfiltered drain returns every caller's results and the ack that
+follows deletes them. Coordinate before running anything unfiltered against a box someone else is
+using.
 
 ## Rebuilding the GCP side
 

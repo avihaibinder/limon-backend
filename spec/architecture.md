@@ -81,7 +81,7 @@ These are repo-wide and not restated in the individual spec files:
                                                    Cloud Tasks
                                                         │
                                                         ▼
-                                              /internal/transcribe ──► Nebius
+                                              /internal/transcribe ──► the box
 ```
 
 **Cloud Run** runs the service; it must stay publicly reachable because Pub/Sub push and Cloud

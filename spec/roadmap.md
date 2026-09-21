@@ -98,7 +98,7 @@ The transcription container is expected to eventually graduate into this reposit
 asking "what is next for the transcriber?" should be pointed at that repository, which carries its
 own `spec/` and its own roadmap.
 
-- **Repo:** `MatanKoby/hebrew-transcriber` (public), checked out locally at
+- **Repo:** `MatanKoby/hebrew-transcriber` (private), checked out locally at
   `~/dev-projects/hebrew-transcriber`.
 - **Its roadmap and design record:** `spec/README.md` there, with `spec/roadmap.md`,
   `spec/deploy-cpu.md`, `spec/deploy-gpu.md` and `spec/benchmark.md`. Work is queued in its
@@ -109,14 +109,23 @@ deployment targets: the existing Nebius L40S GPU endpoint, and an always-on CPU 
 Oracle free-tier ARM VPS (aarch64 Ampere A1, 2 vCPU, 11GB RAM, reachable as `ssh oracle-vps`).
 
 The motive is cost. The L40S is down by design and costs money to raise (`ops.md`), which is why
-`transcription.md` has to tell operators to raise the endpoint *before* recording. An always-on
+`transcription.md` had to tell operators to raise the endpoint *before* recording. An always-on
 zero-cost endpoint would delete that step, and with it the pending-backlog caveat under **Deferred
 deliberately** above.
 
-Whether the ARM box is good enough is still open, and that repo owns the benchmark that decides
-it. Two halves: transcription **quality** on CPU, and **latency**, which on 2 ARM cores is
-expected to be far worse than the L40S `rtf` of 0.087.
+**This happened on 2026-09-21, and it was not the URL swap this section predicted.** The ARM box
+is now the only transcriber and Nebius is gone (`transcription.md`, with the old design in
+`archive.md`).
 
-Nothing in this backend changes yet. If the ARM target proves fast enough, the only change here is
-where `TRANSCRIBE_ENDPOINT_URL` points; the wire contract in `transcription.md` is unaffected. The
-graduation note above still stands as the longer-term intent and is not cancelled by this move.
+The prediction was wrong in the way worth recording: it assumed the box would be fast enough to
+answer a live request, so that only `TRANSCRIBE_ENDPOINT_URL` would move and the wire contract would
+be unaffected. It is not fast enough — about 0.98x real time, against the L40S `rtf` of 0.087 — so
+the integration is **asynchronous**: the backend uploads audio, the box calls back when it is done,
+and the backend drains the transcripts. That is a different shape, not a different address, and it
+is the larger part of what shipped.
+
+Transcription **quality** on CPU remains genuinely open and that repo still owns the benchmark. It
+is essentially unmeasured on Hebrew — one four-clip smoke test, explicitly not a ranking — which now
+matters more rather than less, since there is no GPU to fall back to.
+
+The graduation note above still stands as the longer-term intent and is not cancelled by this move.
