@@ -28,6 +28,31 @@ box, including one they never submitted. Our production drain is unfiltered, whi
 LimON is the only caller and destructive the moment it is not. If a second consumer ever appears,
 the drain has to filter by ids we submitted and this design changes shape (`transcription.md`).
 
+### Auto-tagging is failing in production
+
+`TaggerResponseError` on every event since the 2026-09-21 deploy. The code merged on 2026-09-20
+moved tagging to Groq, but the Cloud Run environment still points at Nebius
+(`LIMON_TAGGER_BASE_URL=https://api.tokenfactory.nebius.com/v1/`, model `Qwen/Qwen3-32B`, secret
+`nebius_token_factory_tagger_api_key`), and env vars override the code's defaults. There is no Groq
+key in the project.
+
+Whether the Nebius key expired or the model moved is unknown — the error is deliberately not
+echoed into the logs. Transcription is unaffected: tagging is best-effort and cannot undo a stored
+transcript. The fix is a Groq API key plus the three matching env vars (`ops.md`).
+
+### Nothing alerts when the pipeline dies
+
+Three failures so far are all silent, and each is only visible by going and looking:
+
+- the Pub/Sub push subscription expiring (`ops.md`), which stops transcription starting at all
+- the transcriber's tunnel URL rotating, which stops submissions landing
+- auto-tagging failing, above
+
+Each leaves every individual component healthy — `/health` green, no errors in the request path —
+and shows up only as a `STEP=` marker that never arrives. There is no monitoring and no
+alerting of any kind. A single daily check that "an `event_created` in the last 24h was followed by
+a `transcribed`" would catch all three.
+
 ### `provision_trigger.sh` wires the wrong bucket
 
 It derives the bucket name in a way that does not match the bucket the service uses, and a bucket

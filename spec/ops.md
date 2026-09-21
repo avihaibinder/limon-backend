@@ -60,11 +60,38 @@ gcloud pubsub topics add-iam-policy-binding limon-uploads --project $PROJECT \
 gcloud storage buckets notifications create "gs://$BUCKET" --project $PROJECT \
   --topic=limon-uploads --event-types=OBJECT_FINALIZE --payload-format=json
 gcloud pubsub subscriptions create limon-uploads-push --project $PROJECT \
-  --topic=limon-uploads --push-endpoint="$API/internal/uploaded" --ack-deadline=60
+  --topic=limon-uploads --push-endpoint="$API/internal/uploaded" --ack-deadline=60 \
+  --expiration-period=never
 gcloud run services update limon-api --project $PROJECT --region $REGION \
   --update-env-vars "LIMON_TASKS_PROJECT=$PROJECT,LIMON_TASKS_LOCATION=$REGION,\
 LIMON_TASKS_QUEUE=limon-transcribe,LIMON_TASKS_WORKER_URL=$API"
 ```
+
+### The push subscription expires, and its death is silent
+
+**`--expiration-period=never` is load bearing.** A Pub/Sub subscription defaults to expiring after
+**31 days without activity**, and LimON goes quiet for longer than that routinely. When it expires,
+GCS keeps publishing finalize events to the topic, the topic keeps accepting them, and nothing is
+listening — so uploads land in the bucket and the backend is never told.
+
+**This happened.** On 2026-09-21 `limon-uploads-push` was found missing, with zero subscriptions in
+the project and the last deploy 46 days earlier. Audio was reaching GCS and no transcription was
+starting. At least one recording had been stranded since 2026-09-10.
+
+**Nothing alerts on it and every individual piece looks healthy** — the bucket notification is
+configured, the topic exists, the service is up, `/health` is green. The only symptom is
+`event_created` in the logs with no `finalize_received` after it, which you see only if you go
+looking.
+
+To check it is alive:
+
+```bash
+gcloud pubsub topics list-subscriptions limon-uploads --project limon-502611
+```
+
+Empty output means the pipeline is dead. Recreate with the command above, then re-drive whatever
+piled up — the recovery pass in `transcription.md` does this on the next callback, or force it with
+`/internal/transcripts-sweep`.
 
 ### Schema changes come first
 
