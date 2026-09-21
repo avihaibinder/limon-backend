@@ -12,9 +12,14 @@ The box is reachable only through a Cloudflare Quick Tunnel whose address is rem
 exists. While it is stale every submission fails soft and work piles up as `pending` until someone
 notices and updates `LIMON_TRANSCRIBER_BASE_URL`.
 
-The sweep makes this survivable rather than solved: nothing is lost, but transcription silently
-stops. A stable ingress is queued work in the transcriber's own repo (its Batch K) and is not ours
-to build. **Nothing here alerts on it today** — the first symptom is transcripts not appearing.
+Nothing is lost — the audio stays in GCS and the work is recoverable indefinitely — but
+transcription silently stops, and **recovery does not resume on its own the moment the URL is
+fixed.** Since recovery rides on the box's callback and nothing is reaching the box, it takes the
+next recording (or a manual `/internal/transcripts-sweep`) to restart the pipeline
+(`transcription.md`).
+
+A stable ingress is queued work in the transcriber's own repo (its Batch K) and is not ours to
+build. **Nothing here alerts on it today** — the first symptom is transcripts not appearing.
 
 ### The box is one queue with no per-caller scoping
 

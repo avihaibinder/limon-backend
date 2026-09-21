@@ -163,17 +163,19 @@ CALLBACK_SECRET=<the value of LIMON_TRANSCRIBER_CALLBACK_SECRET>
 **`CALLBACK_AUTH=oidc` cannot work from this box** and must not be set: it mints the token from the
 GCP metadata server, which only resolves when the sender is itself on GCP (`transcription.md`).
 
-The daily backstop is Cloud Scheduler against `/internal/transcripts-sweep`, carrying the same
-secret header the callback uses:
+**There is no Cloud Scheduler job and no cron.** Recovery rides on the box's callback rather than a
+clock, because audio is never deleted from GCS and so nothing stranded ever expires
+(`transcription.md`). `cloudscheduler.googleapis.com` is not enabled on the project and does not
+need to be.
+
+The one case that stays slow is this section's own failure mode: while the tunnel URL is stale
+nothing submits, so nothing finishes, so nothing wakes the service. Fixing the URL does not itself
+trigger recovery — the next recording does. To not wait:
 
 ```bash
-gcloud scheduler jobs create http limon-transcripts-sweep \
-  --project limon-502611 --location us-east1 --schedule "0 4 * * *" \
-  --uri "https://limon-api-610976310144.us-east1.run.app/internal/transcripts-sweep" \
-  --http-method POST --headers "X-Callback-Token=$CALLBACK_SECRET"
+curl -X POST -H "X-Callback-Token: $CALLBACK_SECRET" \
+  https://limon-api-610976310144.us-east1.run.app/internal/transcripts-sweep
 ```
-
-`cloudscheduler.googleapis.com` is **not enabled** on the project and has to be turned on first.
 
 ### Verifying it end to end
 

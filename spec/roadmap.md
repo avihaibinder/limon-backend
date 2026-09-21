@@ -50,16 +50,13 @@ was proven end to end on production in one hands-free pass on 2026-07-24.
 These are decisions, not omissions. Each has a reason that should be argued with before
 reversing.
 
-**No pending-backlog re-enqueue.** Nothing sweeps up recordings that piled up while the
-transcription endpoint was down. A backlog only forms in an always-on ingestion path running
-unattended; in the manual demo workflow the only pending rows are the handful the operator just
-made and already knows about. The consequence is real and stated in `transcription.md`: raise the
-endpoint *before* recording. Revisit when ingestion runs unattended long enough for a real
-backlog to exist.
-
-**No automated dead-man switch** on the GPU endpoint. A standing Cloud Scheduler is itself a way
-to drift past the free tier, and there is one operator watching one endpoint. The safety net is
-discipline (`ops.md`).
+**No scheduled sweep, and no Cloud Scheduler.** Recovery of stranded work rides on the
+transcriber's callback instead of a clock. The reason it can is specific rather than general:
+**audio is never deleted from GCS after transcription**, so a recording that never reached the box
+stays recoverable indefinitely and no window is being raced. What it costs is that recovery begins
+with the next recording rather than at a fixed hour, which is acceptable while nobody is waiting on
+a transcript in an app nobody is using (`transcription.md`). Revisit if ingestion ever runs
+unattended, or if audio retention changes — the second would remove the premise entirely.
 
 **No distributed tracing.** Rejected in favour of per-hop `STEP=` markers — trace-context
 propagation across GCS, Pub/Sub, and Cloud Tasks plus a new vendor, to learn what `recordId`

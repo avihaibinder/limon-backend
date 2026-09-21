@@ -193,16 +193,16 @@ instruction to resubmit.
 Auto-tagging is enqueued here, after a transcript lands (`tagging.md`) — best-effort, so an enqueue
 failure cannot undo a transcript that is already stored.
 
-## The backstop sweep
+## Recovery, and why there is no scheduler
 
-**`POST /internal/transcripts-sweep`**, daily via Cloud Scheduler. The callback is the fast path and
-never a guarantee: the box retries delivery five times over about a minute and then gives up, and
-giving up is safe precisely because nothing is deleted — the results wait, and something has to
-eventually come and get them.
+**`POST /internal/transcripts-sweep`** exists as a manual handle, but **nothing calls it on a
+schedule.** Recovery runs on the callback: every wakeup from the box collects transcripts *and*
+looks for work that fell out of the pipeline.
 
-Three jobs, in order:
+Three jobs, in order, bounded to `LIMON_TRANSCRIBER_RECOVERY_BATCH_LIMIT` rows per pass so one
+callback cannot turn into an unbounded amount of work:
 
-1. Run the collection cycle unconditionally.
+1. Run the collection cycle.
 2. Recordings `transcribing` past `LIMON_TRANSCRIBER_STALE_SUBMITTED_HOURS`: ask `GET /jobs/{id}`.
    A `404` is ambiguous — unknown, acknowledged or expired — and all three mean no transcript is
    coming, so revert to `pending` and re-enqueue. A non-terminal status means it is still queued
@@ -212,6 +212,32 @@ Three jobs, in order:
 Step 3 closes a defect this design inherited: a submission that outlived its Cloud Tasks budget
 reverted to `pending` and became indistinguishable from one that had not started, needing a human
 to re-drive it (`archive.md`).
+
+**Why a trigger is enough, where a clock would normally be.** The decisive fact is that **audio is
+never deleted from GCS after transcription** — the object at `v0/{userId}/{recordId}.m4a` outlives
+the transcript indefinitely (its retention is an open roadmap item, and a separate concern). So a
+recording that never reached the box stays fully recoverable, forever. There is no expiry being
+raced and no window closing, which is precisely the condition under which a scheduled sweep buys
+nothing that an opportunistic one does not.
+
+The two halves of "what could go wrong" also land differently, and only one of them ever needed a
+clock:
+
+- **A transcript we failed to collect** is safe on the box for `JOB_TTL_DAYS` (30) and only our ack
+  deletes it, so the next successful drain gets it. The box also retries its callback. This half
+  was never at risk.
+- **A recording that never got submitted** is invisible to the box — it is a row in our database
+  the box has never heard of — so no amount of box-side retrying can recover it. This is the half
+  recovery exists for, and it is the half a clock would have covered.
+
+**What it costs, stated plainly: if nothing is submitted and nothing finishes, nothing recovers.**
+The first successful submission after an outage produces a callback, and that callback re-drives
+everything stranded behind it. So recovery begins with the next recording rather than at a fixed
+hour — and if nobody is recording, nobody is waiting for a transcript either.
+
+The case this leaves slowest is a rotated tunnel URL (`ops.md`): while the address is stale nothing
+submits, so nothing finishes, so nothing wakes us. Fixing the URL does not itself trigger recovery;
+the next recording does. Hit `/internal/transcripts-sweep` by hand if you do not want to wait.
 
 Both routes authenticate with the box's shared secret and **fail closed** — an unset secret rejects
 rather than opens, unlike the other `/internal/*` routes (`security.md`). The two rejection codes

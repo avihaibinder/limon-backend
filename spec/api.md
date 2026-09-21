@@ -147,7 +147,7 @@ Mounted at the root, outside `/api/v1`, without the user gate. Called by Cloud T
 | `POST` | `/internal/transcribe` | Cloud Tasks — `{"recordId": …}` |
 | `POST` | `/internal/tag` | Cloud Tasks — `{"eventId": …}` |
 | `POST` | `/internal/transcripts-ready` | The transcriber box, when results are waiting |
-| `POST` | `/internal/transcripts-sweep` | Cloud Scheduler, daily |
+| `POST` | `/internal/transcripts-sweep` | Nothing, on a schedule — a manual handle |
 
 `/internal/transcribe` and `/internal/tag` answer `200` for terminal outcomes and **`503` with
 `Retry-After`** when the work should be retried, which is how the queue's backoff is driven
