@@ -60,8 +60,8 @@ async def require_callback_auth(request: Request) -> None:
     minute -- right for "not configured yet", which a deploy will fix. ``401`` is
     a 4xx, which it does **not** retry -- right for a wrong secret, since
     hammering a misconfigured endpoint helps nobody. Both are safe: a callback
-    that never lands deletes nothing, and the backstop sweep collects whatever
-    piled up.
+    that never lands deletes nothing, and the next one that does land collects
+    everything that piled up behind it.
     """
     settings = get_settings()
     expected = settings.transcriber_callback_secret
@@ -94,9 +94,14 @@ async def transcripts_ready(
     CPU outside a request, so work deferred past the response is not guaranteed
     to run, and the wakeup would be wasted.
 
-    Always ``200``. The collection cycle is internally idempotent and anything it
-    could not store stays on the box, so there is nothing a retry of this call
-    would fix that the next drain will not.
+    **This is also where recovery happens**, which is why it calls ``sweep``
+    rather than ``collect_transcripts``: this wakeup is the only clock the
+    service has, and there is deliberately no scheduler behind it
+    (``transcription.sweep``).
+
+    Always ``200``. The cycle is internally idempotent and anything it could not
+    store stays on the box, so there is nothing a retry of this call would fix
+    that the next drain will not.
     """
     step(
         "callback_received",
@@ -104,16 +109,8 @@ async def transcripts_ready(
         waiting=payload.results_waiting,
         queueEmpty=payload.queue_empty,
     )
-    result = await transcription.collect_transcripts(session)
-    return JSONResponse(
-        {
-            "status": "ok",
-            "written": result.written,
-            "failed": result.failed,
-            "acked": len(result.acked),
-        },
-        status_code=200,
-    )
+    summary = await transcription.sweep(session)
+    return JSONResponse({"status": "ok", **summary}, status_code=200)
 
 
 @router.post("/transcripts-sweep")
@@ -121,10 +118,11 @@ async def transcripts_sweep(
     session: SessionDep,
     _auth: Annotated[None, Depends(require_callback_auth)],
 ) -> JSONResponse:
-    """The daily backstop (Cloud Scheduler).
+    """The same cycle the callback runs, exposed as a manual handle.
 
-    Collects anything whose callback never arrived, re-drives recordings the box
-    no longer has a job for, and re-enqueues submissions that never got out.
+    **Nothing calls this on a schedule.** Recovery normally rides on the callback
+    above; this is here for the times you want it now -- after fixing a rotated
+    tunnel URL, say, rather than waiting for the next recording to trigger it.
     Shares the callback's authentication because it does the same work and has
     the same blast radius.
     """

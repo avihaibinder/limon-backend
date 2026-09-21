@@ -79,12 +79,18 @@ class Settings(BaseSettings):
     transcriber_max_audio_duration_s: float = 600.0
     transcriber_max_upload_bytes: int = 25 * 1024 * 1024
 
-    # Backstop sweep thresholds. `transcribing` means "submitted, waiting for a
+    # Recovery thresholds. `transcribing` means "submitted, waiting for a
     # callback", which is normal for as long as the box's queue is deep, so the
     # bar for calling one stuck is high. `pending` past its Cloud Tasks retry
     # budget (about three minutes) is a submission that never landed.
     transcriber_stale_submitted_hours: float = 6.0
     transcriber_stale_pending_minutes: float = 30.0
+    # How many stale rows one recovery pass will look at. Recovery piggybacks on
+    # the callback, so this bounds the work a single callback can turn into: the
+    # stuck-row check costs one request to the box each. Whatever is left over is
+    # picked up by the next callback -- the audio is still in GCS, so nothing
+    # expires while it waits.
+    transcriber_recovery_batch_limit: int = 25
 
     # Local filesystem directory the worker reads audio from in dev/testing
     # instead of GCS. When set, audio_storage.download reads `{dir}/{storage_key}`.

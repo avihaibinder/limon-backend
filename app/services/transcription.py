@@ -6,8 +6,9 @@ Three entry points, one per trigger:
   Claims a recording and **submits** it. The transcript does not arrive here.
 - ``collect_transcripts`` -- the box's callback, via
   ``POST /internal/transcripts-ready``. Drains, persists, then acknowledges.
-- ``sweep``              -- Cloud Scheduler, via ``POST /internal/transcripts-sweep``.
-  The backstop for a callback that never landed and for work that never got out.
+- ``sweep``              -- collection plus recovery. Runs on every callback, and
+  is also exposed as ``POST /internal/transcripts-sweep`` as a manual handle.
+  **There is no scheduler**; see the function for why a trigger suffices.
 
 The ordering rule that governs all of this: **persist, then acknowledge.** The
 ack is the only thing that deletes a result on the box, so a crash between the
@@ -358,13 +359,25 @@ async def _persist_failure(
 
 
 async def sweep(session: AsyncSession) -> dict[str, int]:
-    """The slow safety net, run daily. Three jobs, in order.
+    """Collect, then re-drive anything that fell out of the pipeline.
 
-    The callback is the fast path and never a guarantee: if every delivery
-    attempt fails, the box gives up, and the results simply wait. Something has
-    to eventually come and get them, and this is it.
+    **This runs on the callback, not on a timer.** There is no scheduler: the
+    box wakes us whenever results are ready, and that wakeup is when we also look
+    for work that never got out. The route exists too, as a manual handle.
+
+    Riding on traffic rather than a clock is sound here for one specific reason:
+    **the audio stays in GCS after transcription**, so a recording that never
+    reached the box is recoverable at any time, indefinitely. Nothing expires and
+    no window is being raced, which is exactly the condition under which a clock
+    buys nothing a trigger does not.
+
+    What it costs, stated plainly: if nothing is submitted and nothing finishes,
+    nothing recovers. The first successful submission after an outage produces a
+    callback, and that callback re-drives everything stranded behind it. So
+    recovery begins with the next recording rather than at a fixed hour.
     """
     settings = get_settings()
+    limit = settings.transcriber_recovery_batch_limit
     collected = await collect_transcripts(session)
 
     now = _utcnow()
@@ -376,9 +389,10 @@ async def sweep(session: AsyncSession) -> dict[str, int]:
     #    transcript is coming, so put it back in the queue.
     stuck_cutoff = now - timedelta(hours=settings.transcriber_stale_submitted_hours)
     stuck = await session.scalars(
-        select(Recording).where(
-            Recording.state == "transcribing", Recording.updated_at < stuck_cutoff
-        )
+        select(Recording)
+        .where(Recording.state == "transcribing", Recording.updated_at < stuck_cutoff)
+        .order_by(Recording.updated_at)
+        .limit(limit)
     )
     for recording in stuck.all():
         try:
@@ -400,7 +414,10 @@ async def sweep(session: AsyncSession) -> dict[str, int]:
     #    and became indistinguishable from one that had not started.
     pending_cutoff = now - timedelta(minutes=settings.transcriber_stale_pending_minutes)
     pending = await session.scalars(
-        select(Recording).where(Recording.state == "pending", Recording.updated_at < pending_cutoff)
+        select(Recording)
+        .where(Recording.state == "pending", Recording.updated_at < pending_cutoff)
+        .order_by(Recording.updated_at)
+        .limit(limit)
     )
     for recording in pending.all():
         step("sweep_requeue", recordId=recording.id, reason="stale_pending")

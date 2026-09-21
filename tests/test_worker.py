@@ -626,3 +626,82 @@ async def test_sweep_route_runs_with_the_secret(
     )
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+async def test_callback_also_recovers_stale_work(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The callback is the only clock there is, so recovery rides on it.
+
+    There is no scheduler. A recording whose submission never landed is re-driven
+    the next time the box wakes us, which is what makes "no Cloud Scheduler" a
+    design rather than a gap.
+    """
+    async with session_factory() as session:
+        record_id, _ = await _seed(session, state="pending")
+        await session.execute(
+            Recording.__table__.update()
+            .where(Recording.id == record_id)
+            .values(updated_at=datetime.now(UTC) - timedelta(hours=3))
+        )
+        await session.commit()
+
+    _stub_cycle(monkeypatch, [])
+    enqueued: list[str] = []
+
+    async def _enqueue(rid: str) -> None:
+        enqueued.append(rid)
+
+    monkeypatch.setattr(task_queue, "enqueue_transcription", _enqueue)
+
+    response = await client.post(
+        "/internal/transcripts-ready",
+        json={"event": "results_ready", "queue_empty": True},
+        headers={"X-Callback-Token": SECRET},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["requeued_pending"] == 1
+    assert enqueued == [record_id]
+
+
+async def test_recovery_is_bounded_per_pass(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A callback must not turn into an unbounded pile of work.
+
+    Whatever is left over waits for the next one. Nothing expires while it does:
+    the audio is still in GCS, which is the whole reason a trigger can stand in
+    for a schedule here.
+    """
+    async with session_factory() as session:
+        user = User(id="s", provider="google", email="a@example.com")
+        session.add(user)
+        await session.flush()
+        stale = datetime.now(UTC) - timedelta(hours=3)
+        for _ in range(30):
+            session.add(
+                Recording(
+                    user_id=user.id,
+                    storage_key=f"v0/{user.id}/r.m4a",
+                    content_type="audio/mp4",
+                    state="pending",
+                    updated_at=stale,
+                )
+            )
+        await session.commit()
+
+        _stub_cycle(monkeypatch, [])
+        enqueued: list[str] = []
+
+        async def _enqueue(rid: str) -> None:
+            enqueued.append(rid)
+
+        monkeypatch.setattr(task_queue, "enqueue_transcription", _enqueue)
+
+        summary = await transcription.sweep(session)
+
+        assert summary["requeued_pending"] == 25
+        assert len(enqueued) == 25
