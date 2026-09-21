@@ -85,7 +85,9 @@ an optional pre-push hook that blocks a push failing lint or format.
 - **There are no migrations.** Adding a model column requires the matching `ALTER` on the live
   database *first*, or every query on that table 500s service-wide. See `spec/data-model.md`.
 - **Matan runs production DDL and data changes himself.** Hand him the SQL; do not execute it.
-- **Raising the Nebius endpoint costs money.** Ask first, and never tear it down yourself.
+- **The transcriber box is shared and its ack is destructive.** One queue, no per-caller scoping:
+  an unfiltered drain returns every caller's results and the ack that follows deletes them. Filter
+  by your own ids when anyone else is using it. `spec/transcription.md`.
 - **Don't use `scripts/deploy_gcp.sh` for a code deploy** — it replaces the service environment.
   `spec/ops.md` has the right command.
 

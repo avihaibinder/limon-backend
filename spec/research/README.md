@@ -13,3 +13,7 @@ written. Notes are not rewritten to stay current; they are the evidence trail. F
 - **`2026-08-source-inventory.md`**: survey of every existing source of design truth in and
   around this repo (code, `CLAUDE.md`, `spec-local/`, `fe-be-comms/`), ranked by how much it can
   be trusted, with the concrete staleness found. Written to plan the first pass of `spec/`.
+- **`2026-09-transcriber-job-api.md`**: the Oracle VPS transcriber's async job API (submit →
+  callback → drain → persist → ack), read against its contract and its code, mapped onto the work
+  this backend has to do. Includes two findings that contradict that repo's own recommendations,
+  and the open decisions that block building.

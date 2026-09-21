@@ -5,16 +5,28 @@ that is understood and merely unscheduled.
 
 ## Defects
 
-### Exhausted transcriptions are indistinguishable from new ones
+### The transcriber's base URL is a Quick Tunnel and rotates without warning
 
-The soft-failure path reverts a recording to `pending`, so a recording that burned all three
-queue attempts against a down endpoint is left `pending` — never `failed`. Nothing can tell it
-apart from one that has not started. There is no sweep, so it stays that way forever unless
-someone re-drives it by hand (`transcription.md`).
+The box is reachable only through a Cloudflare Quick Tunnel whose address is reminted whenever
+`cloudflared` restarts, and there is no API to discover it — the startup banner is the only place it
+exists. While it is stale every submission fails soft and work piles up as `pending` until someone
+notices and updates `LIMON_TRANSCRIBER_BASE_URL`.
 
-The fix is not obvious: marking it `failed` on budget exhaustion requires knowing the attempt
-count, which the worker does not see. Cloud Tasks sends `X-CloudTasks-TaskRetryCount`, which
-would work, but nothing reads it today.
+Nothing is lost — the audio stays in GCS and the work is recoverable indefinitely — but
+transcription silently stops, and **recovery does not resume on its own the moment the URL is
+fixed.** Since recovery rides on the box's callback and nothing is reaching the box, it takes the
+next recording (or a manual `/internal/transcripts-sweep`) to restart the pipeline
+(`transcription.md`).
+
+A stable ingress is queued work in the transcriber's own repo (its Batch K) and is not ours to
+build. **Nothing here alerts on it today** — the first symptom is transcripts not appearing.
+
+### The box is one queue with no per-caller scoping
+
+Anyone holding `AUTH_TOKEN` can acknowledge — and therefore permanently delete — any result on the
+box, including one they never submitted. Our production drain is unfiltered, which is correct while
+LimON is the only caller and destructive the moment it is not. If a second consumer ever appears,
+the drain has to filter by ids we submitted and this design changes shape (`transcription.md`).
 
 ### `provision_trigger.sh` wires the wrong bucket
 

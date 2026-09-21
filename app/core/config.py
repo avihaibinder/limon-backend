@@ -46,16 +46,51 @@ class Settings(BaseSettings):
     # only required in an environment that actually has Supabase auth.
     supabase_service_role_key: str | None = None
 
-    # Nebius transcription endpoint (raised on demand; see
-    # spec-local/BACKEND_INTEGRATION.md). URL and token change on every
-    # (re)create, so they are deployment config / secrets, not constants. Unset
-    # means the worker treats transcription as unavailable rather than crashing.
-    transcriber_endpoint_url: str | None = None
-    transcriber_endpoint_token: str | None = None
-    # Client timeout (seconds) for one transcription call. Sized from the L40S
-    # rtf (~0.09 * audio_seconds): a 5-minute clip is about 30s of processing,
-    # so 90s leaves headroom for a warming endpoint.
+    # Hebrew transcriber: the always-on Oracle VPS box, over its async job API
+    # (submit -> callback -> drain -> persist -> ack). See spec/transcription.md.
+    #
+    # The base URL is a Cloudflare Quick Tunnel and is reminted whenever the
+    # tunnel restarts, so it is deployment config that must be changeable without
+    # a rebuild, and "it stopped resolving" is an expected operating condition
+    # rather than an incident. Unset means the worker treats transcription as
+    # unavailable rather than crashing.
+    transcriber_base_url: str | None = None
+    transcriber_token: str | None = None
+    # Client timeout (seconds) for one call to the box. This sizes an *upload*,
+    # not a transcription: POST /jobs returns once ffprobe has read the file, and
+    # the transcript arrives much later over the callback.
     transcriber_timeout_s: float = 90.0
+
+    # The secret the box presents on its callback. We choose the value; it is set
+    # on the box as CALLBACK_SECRET with CALLBACK_AUTH=secret. Unset means the
+    # callback endpoint rejects every call -- it fails closed rather than open,
+    # unlike `internal_task_token` above, because the contract requires the
+    # callback to be authenticated and its caller can always supply the header.
+    transcriber_callback_secret: str | None = None
+    # The header that secret arrives in. The box's own default; configurable
+    # there as CALLBACK_SECRET_HEADER if it ever needs to change.
+    transcriber_callback_header: str = "X-Callback-Token"
+
+    # Pre-flight limits, mirroring the box's MAX_AUDIO_DURATION_S and
+    # MAX_UPLOAD_MB so a submission that would be refused is never sent. The byte
+    # cap is 25 MiB, matching the signed-URL cap in storage.py; the two are
+    # deliberately equal and moving one without the other reopens a gap where a
+    # file passes GCS and then fails transcription.
+    transcriber_max_audio_duration_s: float = 600.0
+    transcriber_max_upload_bytes: int = 25 * 1024 * 1024
+
+    # Recovery thresholds. `transcribing` means "submitted, waiting for a
+    # callback", which is normal for as long as the box's queue is deep, so the
+    # bar for calling one stuck is high. `pending` past its Cloud Tasks retry
+    # budget (about three minutes) is a submission that never landed.
+    transcriber_stale_submitted_hours: float = 6.0
+    transcriber_stale_pending_minutes: float = 30.0
+    # How many stale rows one recovery pass will look at. Recovery piggybacks on
+    # the callback, so this bounds the work a single callback can turn into: the
+    # stuck-row check costs one request to the box each. Whatever is left over is
+    # picked up by the next callback -- the audio is still in GCS, so nothing
+    # expires while it waits.
+    transcriber_recovery_batch_limit: int = 25
 
     # Local filesystem directory the worker reads audio from in dev/testing
     # instead of GCS. When set, audio_storage.download reads `{dir}/{storage_key}`.
